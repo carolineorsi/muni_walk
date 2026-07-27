@@ -1175,10 +1175,11 @@
       if(d < best){ best = d; bestPt = np; }
     }
 
-    if(best < 1000){
-      valEl.textContent = Math.round(best) + ' m';
+    const feet = best * 3.28084;
+    if(feet < 1000){
+      valEl.textContent = Math.round(feet) + ' ft';
     }else{
-      valEl.textContent = (best/1000).toFixed(1) + ' km';
+      valEl.textContent = (feet/5280).toFixed(1) + ' mi';
     }
     subEl.textContent = best < 40 ? "you're on the line" : 'to the nearest point on the route';
     coordEl.textContent = bestPt[0].toFixed(4) + ', ' + bestPt[1].toFixed(4);
