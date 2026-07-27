@@ -702,17 +702,26 @@
   let nearestStopInfo = null;            // {name, code, lat, lon, distMeters}
   let lastArrivalFetch = { stopCode: null, time: 0 };
 
-  function normId(s){
-    return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
-  }
-
-  // Loose match between a 511 LineRef (which may be prefixed with an
-  // agency code, e.g. "SF:22" or "22") and our route_name code (e.g. "22").
+  // Per 511.org's own spec (see the SIRI examples in their Transit API
+  // doc), LineRef for Muni is just the plain route code — "580", "17",
+  // "66", etc — with no agency prefix in practice. Some other operators'
+  // examples in the same doc *do* use a prefixed form like "SF:66" or
+  // "MTA NYCT_B63", so we also check the last colon/underscore/slash
+  // -separated segment. Crucially, this is always an *exact* comparison —
+  // never a substring/suffix check — because "66".endsWith("6") is true,
+  // which previously caused route 6's vehicles to match a route 66
+  // selection.
   function matchesRoute(lineRef, routeName){
-    if(!lineRef || !routeName) return false;
-    const a = normId(lineRef), b = normId(routeName);
-    if(!a || !b) return false;
-    return a === b || a.endsWith(b) || b.endsWith(a);
+    if(lineRef == null || !routeName) return false;
+    const raw = String(lineRef).trim();
+    if(!raw) return false;
+    const target = String(routeName).trim().toUpperCase();
+
+    const candidates = new Set([raw.toUpperCase()]);
+    const segments = raw.split(/[:_/\s]+/).filter(Boolean);
+    if(segments.length) candidates.add(segments[segments.length - 1].toUpperCase());
+
+    return candidates.has(target);
   }
 
   function directionMatches(directionRef, direction){
