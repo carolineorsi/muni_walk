@@ -152,6 +152,55 @@
   .progress-track{margin-top:8px;height:8px;border-radius:5px;background:#0e1116;border:1px solid var(--line-hair);overflow:hidden;}
   .progress-fill{height:100%;width:0%;background:linear-gradient(90deg, var(--amber-dim), var(--amber));transition:width .3s ease;}
 
+  /* ---------- Live buses ---------- */
+  #live-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);}
+  .live-heading{display:flex;justify-content:space-between;align-items:center;}
+  .live-heading .stat-label{margin:0;}
+  #live-toggle{
+    position:relative;width:38px;height:22px;border-radius:12px;
+    background:#333c48;border:1px solid var(--line-hair);cursor:pointer;flex:0 0 auto;
+    transition:background .15s;
+  }
+  #live-toggle.on{background:var(--good);border-color:var(--good);}
+  #live-toggle .knob{
+    position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:#0b0d10;transition:left .15s;
+  }
+  #live-toggle.on .knob{left:18px;}
+
+  #live-status{font-size:11px;color:var(--muted);margin-top:6px;display:none;line-height:1.5;}
+  #live-status.visible{display:block;}
+
+  #live-arrival{margin-top:10px;display:none;}
+  #live-arrival.visible{display:block;}
+  .live-arrival-main{display:flex;align-items:baseline;gap:6px;margin-top:2px;}
+  #live-arrival-mins{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:34px;color:var(--amber);line-height:1;}
+  #live-arrival-unit{font-size:12px;color:var(--muted);}
+  #live-arrival-stop{font-size:12px;color:var(--muted);margin-top:2px;}
+
+  #live-list{margin-top:8px;display:none;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;}
+  #live-list.visible{display:flex;}
+  .live-row{
+    display:flex;align-items:center;justify-content:space-between;gap:8px;
+    background:var(--panel-2);border:1px solid var(--line-hair);border-radius:8px;
+    padding:7px 10px;font-size:12.5px;
+  }
+  .live-row .veh-line{display:flex;align-items:center;gap:8px;min-width:0;}
+  .live-row .veh-dir-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
+  .live-row .veh-dir-dot.I{background:var(--inbound);}
+  .live-row .veh-dir-dot.O{background:var(--outbound);}
+  .live-row .veh-dest{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .live-row .veh-eta{font-family:'Space Mono',monospace;font-weight:700;color:var(--amber);flex:0 0 auto;}
+
+  .bus-marker{
+    width:22px;height:22px;border-radius:50%;
+    background:#0b0d10;border:2px solid var(--amber);
+    display:flex;align-items:center;justify-content:center;
+    font-family:'Inter';font-weight:800;font-size:9px;color:var(--amber);
+    box-shadow:0 2px 8px rgba(0,0,0,.5);
+  }
+  .bus-marker.O{border-color:var(--outbound);color:var(--outbound);}
+
   .stat{
     font-family:'Space Mono',monospace;
     font-size:13px;color:var(--paper);
@@ -244,6 +293,26 @@
     <div id="info-card-body">
     <div id="direction-toggle"></div>
 
+    <div id="live-block">
+      <div class="live-heading">
+        <span class="stat-label">Live buses</span>
+        <div id="live-toggle" title="Toggle live buses"><div class="knob"></div></div>
+      </div>
+
+      <div id="live-status"></div>
+
+      <div id="live-arrival">
+        <span class="stat-label" id="live-arrival-label">Next arrival</span>
+        <div class="live-arrival-main">
+          <span id="live-arrival-mins">—</span>
+          <span id="live-arrival-unit">min</span>
+        </div>
+        <div id="live-arrival-stop">—</div>
+      </div>
+
+      <div id="live-list"></div>
+    </div>
+
     <div id="progress-block">
       <div class="progress-heading">
         <span class="stat-label">Progress along route</span>
@@ -286,11 +355,16 @@
   let routeLayerGroup = L.layerGroup().addTo(map);
   let routeSegments = []; // flat array of {a:[lat,lon], b:[lat,lon]} for distance calc
   let routeBounds = null;
+  let busLayerGroup = L.layerGroup().addTo(map);
 
   // ---------- Fallback route list (used only if the live route list fails to load) ----------
   const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
 
   const DATA_BASE = "https://data.sfgov.org/resource/9exe-acju.json";
+
+  // Cloudflare Worker proxy that holds the 511.org API key server-side.
+  // See the muni-511-proxy project for the Worker source.
+  const PROXY_BASE = "https://muni-walk.caroline-orsi.workers.dev/";
 
   // ---------- Embedded route shapes ----------
   // Verbatim MULTILINESTRING geometry pulled from SFMTA's "Muni Simple Routes" open
@@ -406,19 +480,23 @@
   let currentRouteDirs = {};   // { I: {lines:[[lat,lon],...], layers:[L.polyline]}, O: {...} }
   let activeDirection = null;  // 'I' or 'O'
   let progressModel = null;    // { points:[[lat,lon],...], cumDist:[meters...], total:meters }
+  let currentRouteName = null;
 
   // ---------- Load + draw route ----------
   async function loadRoute(routeName){
     routeLayerGroup.clearLayers();
+    busLayerGroup.clearLayers();
     routeSegments = [];
     routeBounds = null;
     currentRouteDirs = {};
     activeDirection = null;
     progressModel = null;
+    currentRouteName = routeName || null;
     document.getElementById('info-card').classList.remove('visible');
     document.getElementById('empty-hint').classList.add('hidden');
     document.getElementById('progress-block').classList.remove('visible');
     document.getElementById('direction-toggle').innerHTML = '';
+    renderLiveList([]); // clear any stale live-bus list from the previous route
 
     if(!routeName){
       badge.textContent = 'SF'; badge.classList.add('empty');
@@ -432,6 +510,7 @@
     // Prefer the embedded, always-available shapes for this route.
     if(EMBEDDED_ROUTES[routeName]){
       drawRouteFromShapes(routeName, EMBEDDED_ROUTES[routeName]);
+      refreshLiveBuses();
       return;
     }
 
@@ -453,6 +532,7 @@
       });
 
       drawRouteFromShapes(routeName, shapes);
+      refreshLiveBuses();
     }catch(e){
       console.error(e);
       showError("Route " + friendlyName(routeName) + " isn't in the offline set and the live SFMTA feed couldn't be reached from here. Lines 1–14 always work offline; other lines need that live connection to succeed.");
@@ -546,6 +626,8 @@
     applyActiveDirectionStyling();
     buildProgressModel();
     updateDistanceReadout();
+    lastArrivalFetch = { stopCode: null, time: 0 }; // force a fresh arrival lookup for the new direction
+    refreshLiveBuses();
   }
 
   function applyActiveDirectionStyling(){
@@ -610,6 +692,326 @@
     };
   }
 
+  // =====================================================================
+  // Live buses — powered by the muni-511-proxy Cloudflare Worker, which
+  // holds the 511.org API key server-side. See PROXY_BASE above.
+  // =====================================================================
+  let liveEnabled = false;
+  let liveTimer = null;
+  let routeStopsCache = {};              // routeName -> [{name, code, lat, lon}]
+  let nearestStopInfo = null;            // {name, code, lat, lon, distMeters}
+  let lastArrivalFetch = { stopCode: null, time: 0 };
+
+  function normId(s){
+    return String(s == null ? '' : s).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  }
+
+  // Loose match between a 511 LineRef (which may be prefixed with an
+  // agency code, e.g. "SF:22" or "22") and our route_name code (e.g. "22").
+  function matchesRoute(lineRef, routeName){
+    if(!lineRef || !routeName) return false;
+    const a = normId(lineRef), b = normId(routeName);
+    if(!a || !b) return false;
+    return a === b || a.endsWith(b) || b.endsWith(a);
+  }
+
+  function directionMatches(directionRef, direction){
+    if(!directionRef || !direction) return false;
+    const d = String(directionRef).toUpperCase();
+    if(direction === 'I') return d.startsWith('I') || d === '1';
+    if(direction === 'O') return d.startsWith('O') || d === '0';
+    return false;
+  }
+
+  function numOrNull(v){
+    if(v == null) return null;
+    const n = Number(v);
+    return isNaN(n) ? null : n;
+  }
+
+  function firstNum(obj, keys){
+    for(const k of keys){
+      const v = obj[k];
+      if(v != null && typeof v !== 'object'){
+        const n = Number(v);
+        if(!isNaN(n)) return n;
+      }
+    }
+    return null;
+  }
+
+  function firstStr(obj, keys){
+    for(const k of keys){
+      const v = obj[k];
+      if(typeof v === 'string' && v.trim()) return v.trim();
+    }
+    return null;
+  }
+
+  // 511.org's JSON shapes vary by endpoint/version, so rather than assume
+  // one exact path, walk the whole response looking for objects that look
+  // like a stop (has lat/lon + a name or code).
+  function extractStops(data){
+    const found = [];
+    const seen = new Set();
+    function visit(node){
+      if(!node || typeof node !== 'object') return;
+      if(Array.isArray(node)){ node.forEach(visit); return; }
+      const loc = (node.Location && typeof node.Location === 'object') ? node.Location : node;
+      const lat = firstNum(loc, ['Latitude','latitude','Lat','lat']);
+      const lon = firstNum(loc, ['Longitude','longitude','Lon','lon','Long']);
+      const name = firstStr(node, ['Name','StopName','name','stop_name']);
+      const code = firstStr(node, ['Code','StopCode','code','stopcode','Id','id','StopId','stop_id']);
+      if(lat != null && lon != null && (name || code)){
+        const key = (code||'') + '|' + lat.toFixed(5) + ',' + lon.toFixed(5);
+        if(!seen.has(key)){
+          seen.add(key);
+          found.push({ name: name || code || 'Stop', code: code || name, lat, lon });
+        }
+      }
+      Object.values(node).forEach(visit);
+    }
+    visit(data);
+    return found;
+  }
+
+  // Same idea for MonitoredVehicleJourney entries — used by both
+  // StopMonitoring (arrival predictions) and VehicleMonitoring (positions).
+  function extractJourneys(data){
+    const out = [];
+    function visit(node){
+      if(!node || typeof node !== 'object') return;
+      if(Array.isArray(node)){ node.forEach(visit); return; }
+      const mvj = node.MonitoredVehicleJourney || ((node.LineRef && (node.MonitoredCall || node.VehicleLocation)) ? node : null);
+      if(mvj && mvj.LineRef){
+        const call = mvj.MonitoredCall || {};
+        const loc = mvj.VehicleLocation || {};
+        out.push({
+          lineRef: mvj.LineRef,
+          directionRef: mvj.DirectionRef,
+          destination: mvj.DestinationName || mvj.PublishedLineName || '',
+          expected: call.ExpectedArrivalTime || null,
+          aimed: call.AimedArrivalTime || null,
+          stopName: call.StopPointName || null,
+          lat: numOrNull(loc.Latitude),
+          lon: numOrNull(loc.Longitude)
+        });
+      } else {
+        Object.values(node).forEach(visit);
+      }
+    }
+    visit(data);
+    return out;
+  }
+
+  async function fetchProxyJSON(path, params){
+    const url = new URL(PROXY_BASE);
+    url.searchParams.set('path', path);
+    Object.keys(params || {}).forEach(k => url.searchParams.set(k, params[k]));
+    const res = await fetch(url.toString());
+    if(!res.ok){
+      const detail = await res.text().catch(()=> '');
+      throw new Error('proxy ' + path + ' failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    }
+    return res.json();
+  }
+
+  async function ensureStopsForRoute(routeName){
+    if(routeStopsCache[routeName]) return routeStopsCache[routeName];
+    const data = await fetchProxyJSON('stops', { operator_id: 'SF', line_id: routeName });
+    const stops = extractStops(data);
+    routeStopsCache[routeName] = stops;
+    return stops;
+  }
+
+  // Picks the stop nearest the user, biased toward stops that actually sit
+  // close to the currently-drawn (active-direction) route line — since
+  // inbound/outbound often run on different streets a block apart, this
+  // keeps us from picking a same-name stop on the wrong side of the route.
+  function pickNearestStop(stops, userPos){
+    if(!stops.length || !userPos) return null;
+    let best = null, bestDist = Infinity;
+    let bestOnLine = null, bestOnLineDist = Infinity;
+
+    stops.forEach(s=>{
+      const d = haversine(userPos[0], userPos[1], s.lat, s.lon);
+      if(d < bestDist){ bestDist = d; best = s; }
+      if(progressModel && progressModel.points.length > 1){
+        let perp = Infinity;
+        for(let i=0;i<progressModel.points.length-1;i++){
+          const np = nearestPointOnSegment([s.lat,s.lon], progressModel.points[i], progressModel.points[i+1]);
+          const pd = haversine(s.lat, s.lon, np[0], np[1]);
+          if(pd < perp) perp = pd;
+        }
+        if(perp < 250 && d < bestOnLineDist){ bestOnLineDist = d; bestOnLine = s; }
+      }
+    });
+
+    const chosen = bestOnLine || best;
+    if(!chosen) return null;
+    return { ...chosen, distMeters: haversine(userPos[0], userPos[1], chosen.lat, chosen.lon) };
+  }
+
+  async function fetchNextArrivals(stopCode, routeName, direction){
+    const data = await fetchProxyJSON('StopMonitoring', { agency: 'SF', stopcode: stopCode });
+    const now = Date.now();
+    const journeys = extractJourneys(data)
+      .filter(j => matchesRoute(j.lineRef, routeName))
+      .map(j => {
+        const arrivalIso = j.expected || j.aimed;
+        const mins = arrivalIso ? Math.round((new Date(arrivalIso).getTime() - now) / 60000) : null;
+        return { ...j, mins };
+      })
+      .filter(j => j.mins !== null)
+      .sort((a,b) => a.mins - b.mins);
+
+    const dirMatches = journeys.filter(j => directionMatches(j.directionRef, direction));
+    return { arrivals: dirMatches.length ? dirMatches : journeys, directionKnown: dirMatches.length > 0 };
+  }
+
+  async function refreshVehiclePositions(routeName){
+    try{
+      const data = await fetchProxyJSON('VehicleMonitoring', { agency: 'SF' });
+      const vehicles = extractJourneys(data).filter(v => matchesRoute(v.lineRef, routeName) && v.lat != null && v.lon != null);
+      busLayerGroup.clearLayers();
+      vehicles.forEach(v=>{
+        const dirClass = directionMatches(v.directionRef, 'O') ? 'O' : 'I';
+        const icon = L.divIcon({
+          className: '',
+          html: '<div class="bus-marker ' + dirClass + '">' + friendlyName(routeName) + '</div>',
+          iconSize: [22,22]
+        });
+        L.marker([v.lat, v.lon], { icon, zIndexOffset: 900 }).addTo(busLayerGroup);
+      });
+    }catch(e){
+      console.warn('Live vehicle positions unavailable:', e);
+    }
+  }
+
+  function renderLiveStatus(text){
+    const el = document.getElementById('live-status');
+    el.textContent = text || '';
+    el.classList.toggle('visible', !!text);
+  }
+
+  function renderLiveArrival(stop, arrivals, directionKnown){
+    const card = document.getElementById('live-arrival');
+    const minsEl = document.getElementById('live-arrival-mins');
+    const unitEl = document.getElementById('live-arrival-unit');
+    const stopEl = document.getElementById('live-arrival-stop');
+    const label = document.getElementById('live-arrival-label');
+
+    if(!stop || !arrivals || !arrivals.length){
+      card.classList.remove('visible');
+      renderLiveList([]);
+      updateInfoSummary();
+      return;
+    }
+
+    card.classList.add('visible');
+    label.textContent = 'Next ' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ' arrival' + (directionKnown ? '' : ' (direction unconfirmed)');
+
+    const soonest = arrivals[0];
+    if(soonest.mins <= 0){
+      minsEl.textContent = 'due';
+      unitEl.textContent = '';
+    }else{
+      minsEl.textContent = soonest.mins;
+      unitEl.textContent = soonest.mins === 1 ? 'min' : 'min';
+    }
+    const distMi = (stop.distMeters / 1609.344).toFixed(1);
+    stopEl.textContent = stop.name + ' · ' + distMi + ' mi walk';
+
+    renderLiveList(arrivals.slice(1, 4));
+    updateInfoSummary();
+  }
+
+  function renderLiveList(arrivals){
+    const list = document.getElementById('live-list');
+    list.innerHTML = '';
+    if(!arrivals || !arrivals.length){
+      list.classList.remove('visible');
+      return;
+    }
+    list.classList.add('visible');
+    arrivals.forEach(a=>{
+      const row = document.createElement('div');
+      row.className = 'live-row';
+      const dirClass = directionMatches(a.directionRef,'O') ? 'O' : 'I';
+      const label = a.mins <= 0 ? 'due' : (a.mins + ' min');
+      row.innerHTML =
+        '<span class="veh-line"><span class="veh-dir-dot ' + dirClass + '"></span>' +
+        '<span class="veh-dest">' + (a.destination || 'Next bus') + '</span></span>' +
+        '<span class="veh-eta">' + label + '</span>';
+      list.appendChild(row);
+    });
+  }
+
+  async function refreshLiveBuses(){
+    if(!liveEnabled || !currentRouteName || !activeDirection){
+      renderLiveStatus('');
+      renderLiveArrival(null, null, false);
+      busLayerGroup.clearLayers();
+      return;
+    }
+
+    if(!lastPos){
+      renderLiveStatus('Turn on GPS to find your nearest stop.');
+      renderLiveArrival(null, null, false);
+    }
+
+    refreshVehiclePositions(currentRouteName);
+
+    if(!lastPos) return;
+
+    try{
+      renderLiveStatus('Finding your nearest stop…');
+      const stops = await ensureStopsForRoute(currentRouteName);
+      if(!stops.length){
+        renderLiveStatus("Couldn't find stops for this route from 511.org.");
+        return;
+      }
+
+      const stop = pickNearestStop(stops, lastPos);
+      if(!stop){
+        renderLiveStatus("Couldn't determine your nearest stop.");
+        return;
+      }
+      nearestStopInfo = stop;
+
+      const now = Date.now();
+      const stale = stop.code !== lastArrivalFetch.stopCode || (now - lastArrivalFetch.time) > 30000;
+      if(stale){
+        renderLiveStatus('Checking arrivals at ' + stop.name + '…');
+        const { arrivals, directionKnown } = await fetchNextArrivals(stop.code, currentRouteName, activeDirection);
+        lastArrivalFetch = { stopCode: stop.code, time: now };
+        renderLiveStatus('');
+        renderLiveArrival(stop, arrivals, directionKnown);
+      }
+    }catch(e){
+      console.warn('Live buses error:', e);
+      renderLiveStatus("Couldn't reach the live bus proxy. Check the Worker is deployed and reachable.");
+      renderLiveArrival(null, null, false);
+    }
+  }
+
+  function setLiveEnabled(on){
+    liveEnabled = on;
+    document.getElementById('live-toggle').classList.toggle('on', on);
+    if(liveTimer){ clearInterval(liveTimer); liveTimer = null; }
+
+    if(on){
+      refreshLiveBuses();
+      liveTimer = setInterval(refreshLiveBuses, 45000);
+    }else{
+      renderLiveStatus('');
+      renderLiveArrival(null, null, false);
+      busLayerGroup.clearLayers();
+    }
+  }
+
+  document.getElementById('live-toggle').addEventListener('click', ()=> setLiveEnabled(!liveEnabled));
+
   function getComputedColor(varName){
     return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
   }
@@ -656,6 +1058,7 @@
 
   function onPosition(pos){
     const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    const firstFix = !lastPos;
     lastPos = [lat, lon];
     gpsDot.classList.add('live');
     gpsText.textContent = 'GPS live';
@@ -673,6 +1076,7 @@
       map.panTo([lat,lon], {animate:true});
     }
     updateDistanceReadout();
+    if(firstFix && liveEnabled) refreshLiveBuses();
   }
 
   function onPositionError(err){
@@ -777,6 +1181,10 @@
   function updateInfoSummary(){
     const el = document.getElementById('info-summary');
     const parts = [];
+    const mins = document.getElementById('live-arrival-mins').textContent;
+    if(document.getElementById('live-arrival').classList.contains('visible') && mins && mins !== '—'){
+      parts.push('next bus ' + (mins === 'due' ? 'due' : mins + 'm'));
+    }
     const pct = document.getElementById('progress-pct').textContent;
     const dist = document.getElementById('distance-value').textContent;
     if(pct && pct !== '—') parts.push(pct + ' along');
