@@ -94,13 +94,63 @@
     display:none;
   }
   #info-card.visible{display:block;}
-  .info-row{display:flex;align-items:baseline;justify-content:space-between;gap:10px;}
+  .info-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
   .info-title{
     font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;letter-spacing:.3px;
+    flex:0 0 auto;white-space:nowrap;
   }
+  #info-summary{
+    font-family:'Space Mono',monospace;font-size:12px;color:var(--muted);
+    display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+    flex:1 1 auto;min-width:0;text-align:right;margin-right:4px;
+  }
+  #info-card.collapsed #info-summary{display:inline-block;}
+  #collapse-btn{
+    flex:0 0 auto;width:28px;height:28px;border-radius:50%;
+    background:var(--panel-2);border:1px solid var(--line-hair);color:var(--paper);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    padding:0;transition:background .15s;
+  }
+  #collapse-btn:active{background:var(--line-hair);}
+  #collapse-btn svg{width:14px;height:14px;transition:transform .2s ease;}
+  #info-card.collapsed #collapse-btn svg{transform:rotate(180deg);}
+  #info-card-body{
+    max-height:400px;opacity:1;overflow:hidden;
+    transition:max-height .25s ease, opacity .2s ease, margin .25s ease;
+  }
+  #info-card.collapsed #info-card-body{max-height:0;opacity:0;}
   .legend{display:flex;gap:14px;margin-top:8px;flex-wrap:wrap;}
   .legend-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);font-family:'Inter';}
   .legend-swatch{width:16px;height:3px;border-radius:2px;}
+
+  /* ---------- Direction toggle ---------- */
+  #direction-toggle{display:flex;gap:8px;margin-top:8px;flex-wrap:wrap;}
+  .dir-btn{
+    display:flex;align-items:center;gap:6px;
+    background:var(--panel-2);border:1px solid var(--line-hair);
+    color:var(--muted);
+    font-family:'Inter';font-size:12.5px;font-weight:600;
+    padding:6px 12px;border-radius:20px;
+    cursor:pointer;transition:all .15s;
+  }
+  .dir-btn:disabled{opacity:.35;cursor:not-allowed;}
+  .dir-btn .dot-swatch{width:10px;height:10px;border-radius:50%;flex:0 0 auto;}
+  .dir-btn.inbound .dot-swatch{background:var(--inbound);}
+  .dir-btn.outbound .dot-swatch{background:var(--outbound);}
+  .dir-btn.active{color:var(--paper);border-color:currentColor;}
+  .dir-btn.inbound.active{background:rgba(79,134,247,.18);border-color:var(--inbound);}
+  .dir-btn.outbound.active{background:rgba(239,91,78,.18);border-color:var(--outbound);}
+
+  /* ---------- Progress-along-route ---------- */
+  #progress-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);display:none;}
+  #progress-block.visible{display:block;}
+  .progress-heading{display:flex;justify-content:space-between;align-items:baseline;}
+  .progress-figures{display:flex;align-items:baseline;gap:8px;}
+  #progress-miles{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:30px;color:var(--paper);line-height:1;}
+  #progress-miles-unit{font-size:12px;color:var(--muted);}
+  #progress-pct{font-family:'Space Mono',monospace;font-weight:700;font-size:15px;color:var(--amber);}
+  .progress-track{margin-top:8px;height:8px;border-radius:5px;background:#0e1116;border:1px solid var(--line-hair);overflow:hidden;}
+  .progress-fill{height:100%;width:0%;background:linear-gradient(90deg, var(--amber-dim), var(--amber));transition:width .3s ease;}
 
   .stat{
     font-family:'Space Mono',monospace;
@@ -183,11 +233,28 @@
   <div id="info-card">
     <div class="info-row">
       <div class="info-title" id="info-title">—</div>
+      <span id="info-summary"></span>
+      <button id="collapse-btn" title="Collapse panel" aria-label="Collapse panel">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M6 9l6 6 6-6"></path>
+        </svg>
+      </button>
     </div>
-    <div class="legend">
-      <div class="legend-item"><span class="legend-swatch" style="background:var(--inbound)"></span>Inbound</div>
-      <div class="legend-item"><span class="legend-swatch" style="background:var(--outbound)"></span>Outbound</div>
+
+    <div id="info-card-body">
+    <div id="direction-toggle"></div>
+
+    <div id="progress-block">
+      <div class="progress-heading">
+        <span class="stat-label">Progress along route</span>
+        <span id="progress-pct">—</span>
+      </div>
+      <div class="progress-figures">
+        <span id="progress-miles">—</span><span id="progress-miles-unit">mi walked of route</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
     </div>
+
     <div id="distance-block">
       <div>
         <span class="stat-label">Distance to route</span>
@@ -198,6 +265,7 @@
         <span class="stat-label">Nearest point</span>
         <div class="stat" id="nearest-coord">—</div>
       </div>
+    </div>
     </div>
   </div>
 </div>
@@ -288,20 +356,16 @@
     });
   }
 
-  async function loadRouteList(){
-    try{
-      const url = DATA_BASE + "?$select=route_name&$group=route_name&$order=route_name&$limit=500";
-      const res = await fetch(url);
-      if(!res.ok) throw new Error('bad status '+res.status);
-      const rows = await res.json();
-      const names = rows.map(r=>r.route_name).filter(Boolean);
-      if(names.length){ fillSelect(names); return; }
-      throw new Error('empty list');
-    }catch(e){
-      console.warn('Falling back to static route list:', e);
-      fillSelect(FALLBACK_ROUTES);
-      showError("Couldn't reach the live SFMTA route list — showing a standard set of lines instead.");
-    }
+  function loadRouteList(){
+    // Show the full curated route list immediately and leave it alone from
+    // here on. (Earlier versions re-populated this list in the background
+    // after a live fetch resolved, which could rebuild the <select> options
+    // out from under an in-progress tap/click and select the wrong line —
+    // e.g. tapping "44" but landing on "43" because the list shifted. The
+    // curated list below already covers every current Muni line, so there's
+    // no need to mutate the dropdown again after this.)
+    const baseList = Array.from(new Set([...EMBEDDED_ROUTE_NAMES, ...FALLBACK_ROUTES]));
+    fillSelect(baseList);
   }
 
   // ---------- WKT / GeoJSON shape parsing ----------
@@ -338,13 +402,23 @@
     return [];
   }
 
-  // ---------- Draw route ----------
+  // ---------- Direction / progress state ----------
+  let currentRouteDirs = {};   // { I: {lines:[[lat,lon],...], layers:[L.polyline]}, O: {...} }
+  let activeDirection = null;  // 'I' or 'O'
+  let progressModel = null;    // { points:[[lat,lon],...], cumDist:[meters...], total:meters }
+
+  // ---------- Load + draw route ----------
   async function loadRoute(routeName){
     routeLayerGroup.clearLayers();
     routeSegments = [];
     routeBounds = null;
+    currentRouteDirs = {};
+    activeDirection = null;
+    progressModel = null;
     document.getElementById('info-card').classList.remove('visible');
     document.getElementById('empty-hint').classList.add('hidden');
+    document.getElementById('progress-block').classList.remove('visible');
+    document.getElementById('direction-toggle').innerHTML = '';
 
     if(!routeName){
       badge.textContent = 'SF'; badge.classList.add('empty');
@@ -355,6 +429,13 @@
     badge.textContent = friendlyName(routeName);
     badge.classList.remove('empty');
 
+    // Prefer the embedded, always-available shapes for this route.
+    if(EMBEDDED_ROUTES[routeName]){
+      drawRouteFromShapes(routeName, EMBEDDED_ROUTES[routeName]);
+      return;
+    }
+
+    // Otherwise, try the live SFMTA feed.
     try{
       const url = DATA_BASE + "?route_name=" + encodeURIComponent(routeName) + "&pattern_type=F&$limit=50";
       const res = await fetch(url);
@@ -363,48 +444,170 @@
       if(!rows.length) throw new Error('no shapes returned for this route');
 
       const seenDir = {};
-      const bounds = [];
-
+      const shapes = {};
       rows.forEach(row=>{
         const dir = row.direction; // 'I' or 'O'
         if(seenDir[dir]) return; // keep first full pattern per direction to avoid overlapping dupes
         seenDir[dir] = true;
-
-        const lines = extractLinesFromShape(row.shape);
-        const color = dir === 'I' ? getComputedColor('--inbound') : getComputedColor('--outbound');
-
-        lines.forEach(latlngs=>{
-          if(latlngs.length < 2) return;
-          const pl = L.polyline(latlngs, {
-            color, weight:5, opacity:0.9, lineCap:'round', lineJoin:'round'
-          }).addTo(routeLayerGroup);
-          latlngs.forEach(p=>bounds.push(p));
-
-          for(let i=0;i<latlngs.length-1;i++){
-            routeSegments.push({a:latlngs[i], b:latlngs[i+1]});
-          }
-
-          // endpoint labels
-          const startPt = latlngs[0];
-          const label = dir === 'I' ? 'Inbound start' : 'Outbound start';
-          L.marker(startPt, {
-            icon: L.divIcon({className:'', html:`<div class="end-marker">${label}</div>`, iconSize:null})
-          }).addTo(routeLayerGroup);
-        });
+        shapes[dir] = row.shape;
       });
 
-      if(bounds.length){
-        routeBounds = L.latLngBounds(bounds);
-        map.fitBounds(routeBounds, {padding:[60,60]});
-      }
-
-      document.getElementById('info-title').textContent = 'Route ' + friendlyName(routeName);
-      document.getElementById('info-card').classList.add('visible');
-      updateDistanceReadout();
+      drawRouteFromShapes(routeName, shapes);
     }catch(e){
       console.error(e);
-      showError("Couldn't load the shape for route " + friendlyName(routeName) + ". Try another line or reselect.");
+      showError("Route " + friendlyName(routeName) + " isn't in the offline set and the live SFMTA feed couldn't be reached from here. Lines 1–14 always work offline; other lines need that live connection to succeed.");
     }
+  }
+
+  function drawRouteFromShapes(routeName, shapes){
+    const bounds = [];
+
+    Object.keys(shapes).forEach(dir=>{
+      const lines = extractLinesFromShape(shapes[dir]);
+      if(!lines.length) return;
+
+      const color = dir === 'I' ? getComputedColor('--inbound') : getComputedColor('--outbound');
+      const layers = [];
+
+      lines.forEach(latlngs=>{
+        if(latlngs.length < 2) return;
+        const pl = L.polyline(latlngs, {
+          color, weight:5, opacity:0.55, lineCap:'round', lineJoin:'round'
+        }).addTo(routeLayerGroup);
+        layers.push(pl);
+        latlngs.forEach(p=>bounds.push(p));
+
+        for(let i=0;i<latlngs.length-1;i++){
+          routeSegments.push({a:latlngs[i], b:latlngs[i+1]});
+        }
+
+        const startPt = latlngs[0];
+        const label = dir === 'I' ? 'Inbound start' : 'Outbound start';
+        L.marker(startPt, {
+          icon: L.divIcon({className:'', html:`<div class="end-marker">${label}</div>`, iconSize:null})
+        }).addTo(routeLayerGroup);
+      });
+
+      currentRouteDirs[dir] = { lines, layers };
+    });
+
+    if(bounds.length){
+      routeBounds = L.latLngBounds(bounds);
+      map.fitBounds(routeBounds, {padding:[60,60]});
+    }
+
+    document.getElementById('info-title').textContent = 'Route ' + friendlyName(routeName);
+    document.getElementById('info-card').classList.add('visible');
+
+    setupDirectionToggle();
+    updateDistanceReadout();
+  }
+
+  // ---------- Direction toggle ----------
+  function setupDirectionToggle(){
+    const wrap = document.getElementById('direction-toggle');
+    wrap.innerHTML = '';
+    const dirs = Object.keys(currentRouteDirs);
+
+    if(!dirs.length){
+      activeDirection = null;
+      progressModel = null;
+      document.getElementById('progress-block').classList.remove('visible');
+      return;
+    }
+
+    activeDirection = currentRouteDirs['I'] ? 'I' : dirs[0];
+
+    ['I','O'].forEach(d=>{
+      const available = !!currentRouteDirs[d];
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'dir-btn ' + (d === 'I' ? 'inbound' : 'outbound');
+      btn.innerHTML = '<span class="dot-swatch"></span>' + (d === 'I' ? 'Inbound' : 'Outbound');
+      btn.disabled = !available;
+      if(d === activeDirection) btn.classList.add('active');
+      btn.addEventListener('click', ()=> setActiveDirection(d));
+      wrap.appendChild(btn);
+    });
+
+    applyActiveDirectionStyling();
+    buildProgressModel();
+    document.getElementById('progress-block').classList.add('visible');
+  }
+
+  function setActiveDirection(d){
+    if(!currentRouteDirs[d]) return;
+    if(d === activeDirection) return;
+    activeDirection = d;
+    document.querySelectorAll('#direction-toggle .dir-btn').forEach(btn=>{
+      const btnDir = btn.classList.contains('inbound') ? 'I' : 'O';
+      btn.classList.toggle('active', btnDir === activeDirection);
+    });
+    applyActiveDirectionStyling();
+    buildProgressModel();
+    updateDistanceReadout();
+  }
+
+  function applyActiveDirectionStyling(){
+    Object.keys(currentRouteDirs).forEach(d=>{
+      const emphasize = d === activeDirection;
+      currentRouteDirs[d].layers.forEach(pl=>{
+        pl.setStyle({ opacity: emphasize ? 0.95 : 0.3, weight: emphasize ? 6 : 4 });
+        if(emphasize) pl.bringToFront();
+      });
+    });
+  }
+
+  // ---------- Along-route progress model ----------
+  function buildProgressModel(){
+    progressModel = null;
+    if(!activeDirection || !currentRouteDirs[activeDirection]) return;
+
+    const points = [];
+    currentRouteDirs[activeDirection].lines.forEach(l => points.push(...l));
+    if(points.length < 2) return;
+
+    const cumDist = [0];
+    for(let i=1;i<points.length;i++){
+      cumDist.push(cumDist[i-1] + haversine(points[i-1][0],points[i-1][1], points[i][0],points[i][1]));
+    }
+    progressModel = { points, cumDist, total: cumDist[cumDist.length-1] };
+  }
+
+  // Finds the point on the active-direction route nearest to `pos`, and how
+  // far along that route (from its start) that point is.
+  function computeProgress(pos){
+    if(!progressModel || progressModel.points.length < 2) return null;
+    const { points, cumDist, total } = progressModel;
+
+    let bestPerp = Infinity, bestAlong = 0;
+    const lat0 = pos[0]*Math.PI/180;
+    const kx = Math.cos(lat0);
+
+    for(let i=0;i<points.length-1;i++){
+      const a = points[i], b = points[i+1];
+      const Ax = (a[1]-pos[1])*kx, Ay = (a[0]-pos[0]);
+      const Bx = (b[1]-pos[1])*kx, By = (b[0]-pos[0]);
+      const ABx = Bx-Ax, ABy = By-Ay;
+      const len2 = ABx*ABx + ABy*ABy;
+      let t = len2 === 0 ? 0 : ((-Ax*ABx + -Ay*ABy) / len2);
+      t = Math.max(0, Math.min(1, t));
+      const nx = Ax + ABx*t, ny = Ay + ABy*t;
+      const nLon = pos[1] + nx/kx, nLat = pos[0] + ny;
+      const perp = haversine(pos[0], pos[1], nLat, nLon);
+      if(perp < bestPerp){
+        bestPerp = perp;
+        const segLen = cumDist[i+1] - cumDist[i];
+        bestAlong = cumDist[i] + t*segLen;
+      }
+    }
+
+    return {
+      perpMeters: bestPerp,
+      alongMeters: bestAlong,
+      totalMeters: total,
+      pct: total > 0 ? (bestAlong/total)*100 : 0
+    };
   }
 
   function getComputedColor(varName){
@@ -432,6 +635,14 @@
   const locateBtn = document.getElementById('locate-btn');
   const gpsDot = document.getElementById('gps-dot');
   const gpsText = document.getElementById('gps-text');
+
+  // ---------- Collapsible info card ----------
+  const infoCard = document.getElementById('info-card');
+  const collapseBtn = document.getElementById('collapse-btn');
+  collapseBtn.addEventListener('click', ()=>{
+    infoCard.classList.toggle('collapsed');
+    updateInfoSummary();
+  });
 
   function positionHeadsignOffsets(){
     const hs = document.getElementById('headsign');
@@ -529,12 +740,16 @@
       valEl.textContent = '—';
       subEl.textContent = 'turn on GPS to measure';
       coordEl.textContent = '—';
+      updateProgressReadout(null);
+      updateInfoSummary();
       return;
     }
     if(!routeSegments.length){
       valEl.textContent = '—';
       subEl.textContent = 'pick a route to measure';
       coordEl.textContent = '—';
+      updateProgressReadout(null);
+      updateInfoSummary();
       return;
     }
 
@@ -553,6 +768,56 @@
     }
     subEl.textContent = best < 40 ? "you're on the line" : 'to the nearest point on the route';
     coordEl.textContent = bestPt[0].toFixed(4) + ', ' + bestPt[1].toFixed(4);
+
+    updateProgressReadout(lastPos);
+    updateInfoSummary();
+  }
+
+  // Condensed one-line readout shown next to the title when the panel is collapsed.
+  function updateInfoSummary(){
+    const el = document.getElementById('info-summary');
+    const parts = [];
+    const pct = document.getElementById('progress-pct').textContent;
+    const dist = document.getElementById('distance-value').textContent;
+    if(pct && pct !== '—') parts.push(pct + ' along');
+    if(dist && dist !== '—') parts.push(dist + ' off-route');
+    el.textContent = parts.join(' · ');
+  }
+
+  function updateProgressReadout(pos){
+    const block = document.getElementById('progress-block');
+    const milesEl = document.getElementById('progress-miles');
+    const pctEl = document.getElementById('progress-pct');
+    const fillEl = document.getElementById('progress-fill');
+    const heading = block.querySelector('.stat-label');
+
+    if(!activeDirection || !progressModel){
+      block.classList.remove('visible');
+      return;
+    }
+    block.classList.add('visible');
+    heading.textContent = 'Progress along route (' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ')';
+
+    if(!pos){
+      milesEl.textContent = '—';
+      pctEl.textContent = '—';
+      fillEl.style.width = '0%';
+      return;
+    }
+
+    const p = computeProgress(pos);
+    if(!p){
+      milesEl.textContent = '—';
+      pctEl.textContent = '—';
+      fillEl.style.width = '0%';
+      return;
+    }
+
+    const miles = p.alongMeters / 1609.344;
+    const pct = Math.max(0, Math.min(100, p.pct));
+    milesEl.textContent = miles.toFixed(1);
+    pctEl.textContent = pct.toFixed(1) + '%';
+    fillEl.style.width = pct.toFixed(1) + '%';
   }
 
   // periodically refresh readout even without new GPS fixes (e.g. after switching routes)
