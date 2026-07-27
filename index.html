@@ -194,11 +194,12 @@
 
   .bus-marker{
     width:22px;height:22px;border-radius:50%;
-    background:#0b0d10;border:2px solid var(--amber);
+    background:#0b0d10;border:2px solid var(--inbound);
     display:flex;align-items:center;justify-content:center;
-    font-family:'Inter';font-weight:800;font-size:9px;color:var(--amber);
+    font-family:'Inter';font-weight:800;font-size:9px;color:var(--inbound);
     box-shadow:0 2px 8px rgba(0,0,0,.5);
   }
+  .bus-marker.I{border-color:var(--inbound);color:var(--inbound);}
   .bus-marker.O{border-color:var(--outbound);color:var(--outbound);}
 
   .stat{
