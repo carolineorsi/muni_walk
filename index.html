@@ -244,9 +244,9 @@
   }
   .route-arrow{
     width:0;height:0;
-    border-left:5px solid transparent;
-    border-right:5px solid transparent;
-    border-bottom:11px solid var(--amber);
+    border-left:9px solid transparent;
+    border-right:9px solid transparent;
+    border-bottom:19px solid var(--amber);
     filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));
     transition:opacity .2s ease;
   }
@@ -604,6 +604,27 @@
   // direction of travel, spaced by real-world distance rather than by
   // vertex count (so they land evenly whether the source geometry is
   // sparse or dense).
+  // Returns a darker shade of a #rrggbb (or rgb(...)) color, for the arrow
+  // markers so they read as a distinct layer on top of the route line
+  // rather than blending into it.
+  function darkenColor(color, factor){
+    let r, g, b;
+    const hexMatch = /^#?([0-9a-f]{6})$/i.exec(color);
+    if(hexMatch){
+      const hex = hexMatch[1];
+      r = parseInt(hex.slice(0,2),16);
+      g = parseInt(hex.slice(2,4),16);
+      b = parseInt(hex.slice(4,6),16);
+    }else{
+      const rgbMatch = /rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/i.exec(color);
+      if(!rgbMatch) return color;
+      r = +rgbMatch[1]; g = +rgbMatch[2]; b = +rgbMatch[3];
+    }
+    const clamp = v => Math.max(0, Math.min(255, Math.round(v)));
+    r = clamp(r*factor); g = clamp(g*factor); b = clamp(b*factor);
+    return 'rgb(' + r + ',' + g + ',' + b + ')';
+  }
+
   function addDirectionArrows(latlngs, color){
     const markers = [];
     if(latlngs.length < 2) return markers;
@@ -615,8 +636,9 @@
     const total = cum[cum.length-1];
     if(total <= 0) return markers;
 
-    const SPACING_METERS = 350;
-    const START_OFFSET_METERS = 150;
+    const SPACING_METERS = 650;
+    const START_OFFSET_METERS = 200;
+    const arrowColor = darkenColor(color, 0.6);
 
     for(let d = START_OFFSET_METERS; d < total; d += SPACING_METERS){
       let idx = 0;
@@ -630,9 +652,9 @@
 
       const icon = L.divIcon({
         className: '',
-        html: '<div class="route-arrow" style="transform:rotate(' + bearing + 'deg);border-bottom-color:' + color + ';"></div>',
-        iconSize: [14,14],
-        iconAnchor: [7,7]
+        html: '<div class="route-arrow" style="transform:rotate(' + bearing + 'deg);border-bottom-color:' + arrowColor + ';"></div>',
+        iconSize: [22,22],
+        iconAnchor: [11,11]
       });
       const marker = L.marker(pos, { icon, interactive:false, keyboard:false, zIndexOffset:200 }).addTo(routeLayerGroup);
       markers.push(marker);
@@ -696,7 +718,7 @@
       });
       (currentRouteDirs[d].arrowMarkers || []).forEach(m=>{
         const el = m.getElement();
-        if(el) el.style.opacity = emphasize ? '1' : '0.28';
+        if(el) el.style.opacity = emphasize ? '1' : '0';
       });
     });
   }
