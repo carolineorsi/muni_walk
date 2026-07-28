@@ -652,8 +652,8 @@
 
       const icon = L.divIcon({
         className: '',
-        html: '<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;">' +
-              '<div class="route-arrow" style="transform:rotate(' + bearing + 'deg);border-bottom-color:' + arrowColor + ';"></div>' +
+        html: '<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;transform:rotate(' + bearing + 'deg);">' +
+              '<div class="route-arrow" style="border-bottom-color:' + arrowColor + ';"></div>' +
               '</div>',
         iconSize: [22,22],
         iconAnchor: [11,11]
@@ -937,28 +937,52 @@
   // close to the currently-drawn (active-direction) route line — since
   // inbound/outbound often run on different streets a block apart, this
   // keeps us from picking a same-name stop on the wrong side of the route.
+  function perpDistanceToPolyline(points, pos){
+    if(!points || points.length < 2) return Infinity;
+    let best = Infinity;
+    for(let i=0;i<points.length-1;i++){
+      const np = nearestPointOnSegment(pos, points[i], points[i+1]);
+      const d = haversine(pos[0], pos[1], np[0], np[1]);
+      if(d < best) best = d;
+    }
+    return best;
+  }
+
+  // Picks the stop nearest the user that actually belongs to the active
+  // direction. Rather than a flat "within N meters of the line" cutoff —
+  // which fails on one-way street couplets where inbound and outbound run
+  // on different streets a block or more apart — this compares each
+  // stop's distance to the active-direction line against its distance to
+  // the *other* direction's line, and only considers a stop "ours" if
+  // it's relatively closer to our line. That works regardless of how far
+  // apart the two streets are.
   function pickNearestStop(stops, userPos){
     if(!stops.length || !userPos) return null;
-    let best = null, bestDist = Infinity;
-    let bestOnLine = null, bestOnLineDist = Infinity;
 
-    stops.forEach(s=>{
-      const d = haversine(userPos[0], userPos[1], s.lat, s.lon);
-      if(d < bestDist){ bestDist = d; best = s; }
-      if(progressModel && progressModel.points.length > 1){
-        let perp = Infinity;
-        for(let i=0;i<progressModel.points.length-1;i++){
-          const np = nearestPointOnSegment([s.lat,s.lon], progressModel.points[i], progressModel.points[i+1]);
-          const pd = haversine(s.lat, s.lon, np[0], np[1]);
-          if(pd < perp) perp = pd;
-        }
-        if(perp < 250 && d < bestOnLineDist){ bestOnLineDist = d; bestOnLine = s; }
-      }
+    const activePoints = (progressModel && progressModel.points.length > 1) ? progressModel.points : null;
+    const otherDir = activeDirection === 'I' ? 'O' : 'I';
+    const otherPoints = (currentRouteDirs[otherDir] && currentRouteDirs[otherDir].lines.length)
+      ? currentRouteDirs[otherDir].lines.reduce((acc,l)=>acc.concat(l), [])
+      : null;
+
+    const candidates = stops.map(s=>{
+      const pos = [s.lat, s.lon];
+      return {
+        stop: s,
+        toActive: perpDistanceToPolyline(activePoints, pos),
+        toOther: perpDistanceToPolyline(otherPoints, pos),
+        userDist: haversine(userPos[0], userPos[1], s.lat, s.lon)
+      };
     });
 
-    const chosen = bestOnLine || best;
-    if(!chosen) return null;
-    return { ...chosen, distMeters: haversine(userPos[0], userPos[1], chosen.lat, chosen.lon) };
+    let pool = candidates.filter(c => c.toActive < 400 && c.toActive <= c.toOther);
+    if(!pool.length) pool = candidates.filter(c => c.toActive < 400);
+    if(!pool.length) pool = candidates; // last resort: nearest overall, no direction info at all
+
+    pool.sort((a,b) => a.userDist - b.userDist);
+    const best = pool[0];
+    if(!best) return null;
+    return { ...best.stop, distMeters: best.userDist };
   }
 
   async function fetchNextArrivals(stopCode, routeName, direction){
@@ -1018,7 +1042,7 @@
     }
 
     card.classList.add('visible');
-    label.textContent = 'Next ' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ' arrival' + (directionKnown ? '' : ' (direction unconfirmed)');
+    label.textContent = 'Next ' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ' arrival';
 
     const soonest = arrivals[0];
     if(soonest.mins <= 0){
