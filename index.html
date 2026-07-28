@@ -652,7 +652,9 @@
 
       const icon = L.divIcon({
         className: '',
-        html: '<div class="route-arrow" style="transform:rotate(' + bearing + 'deg);border-bottom-color:' + arrowColor + ';"></div>',
+        html: '<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;">' +
+              '<div class="route-arrow" style="transform:rotate(' + bearing + 'deg);border-bottom-color:' + arrowColor + ';"></div>' +
+              '</div>',
         iconSize: [22,22],
         iconAnchor: [11,11]
       });
