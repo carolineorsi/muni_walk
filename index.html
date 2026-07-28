@@ -730,44 +730,61 @@
     progressModel = null;
     if(!activeDirection || !currentRouteDirs[activeDirection]) return;
 
-    const points = [];
-    currentRouteDirs[activeDirection].lines.forEach(l => points.push(...l));
-    if(points.length < 2) return;
+    // Route geometry for a direction often comes as several *disconnected*
+    // line pieces (breaks at intersections, via-segments, etc). Each piece
+    // is kept separate here — with a running distance offset so "percent
+    // along route" still makes sense end-to-end — rather than flattened
+    // into one array, which would create a phantom segment bridging the
+    // gap between the end of one piece and the start of the next.
+    const rawLines = currentRouteDirs[activeDirection].lines.filter(l => l && l.length > 1);
+    if(!rawLines.length) return;
 
-    const cumDist = [0];
-    for(let i=1;i<points.length;i++){
-      cumDist.push(cumDist[i-1] + haversine(points[i-1][0],points[i-1][1], points[i][0],points[i][1]));
-    }
-    progressModel = { points, cumDist, total: cumDist[cumDist.length-1] };
+    const groups = [];
+    let offset = 0;
+    rawLines.forEach(points=>{
+      const cumDist = [0];
+      for(let i=1;i<points.length;i++){
+        cumDist.push(cumDist[i-1] + haversine(points[i-1][0],points[i-1][1], points[i][0],points[i][1]));
+      }
+      groups.push({ points, cumDist, offset });
+      offset += cumDist[cumDist.length-1];
+    });
+
+    progressModel = { groups, total: offset };
   }
 
   // Finds the point on the active-direction route nearest to `pos`, and how
-  // far along that route (from its start) that point is.
+  // far along that route (from its start) that point is. Iterates each
+  // sub-line's real segments independently — never a phantom segment
+  // bridging two disconnected pieces.
   function computeProgress(pos){
-    if(!progressModel || progressModel.points.length < 2) return null;
-    const { points, cumDist, total } = progressModel;
+    if(!progressModel || !progressModel.groups.length) return null;
+    const { groups, total } = progressModel;
 
     let bestPerp = Infinity, bestAlong = 0;
     const lat0 = pos[0]*Math.PI/180;
     const kx = Math.cos(lat0);
 
-    for(let i=0;i<points.length-1;i++){
-      const a = points[i], b = points[i+1];
-      const Ax = (a[1]-pos[1])*kx, Ay = (a[0]-pos[0]);
-      const Bx = (b[1]-pos[1])*kx, By = (b[0]-pos[0]);
-      const ABx = Bx-Ax, ABy = By-Ay;
-      const len2 = ABx*ABx + ABy*ABy;
-      let t = len2 === 0 ? 0 : ((-Ax*ABx + -Ay*ABy) / len2);
-      t = Math.max(0, Math.min(1, t));
-      const nx = Ax + ABx*t, ny = Ay + ABy*t;
-      const nLon = pos[1] + nx/kx, nLat = pos[0] + ny;
-      const perp = haversine(pos[0], pos[1], nLat, nLon);
-      if(perp < bestPerp){
-        bestPerp = perp;
-        const segLen = cumDist[i+1] - cumDist[i];
-        bestAlong = cumDist[i] + t*segLen;
+    groups.forEach(g=>{
+      const { points, cumDist, offset } = g;
+      for(let i=0;i<points.length-1;i++){
+        const a = points[i], b = points[i+1];
+        const Ax = (a[1]-pos[1])*kx, Ay = (a[0]-pos[0]);
+        const Bx = (b[1]-pos[1])*kx, By = (b[0]-pos[0]);
+        const ABx = Bx-Ax, ABy = By-Ay;
+        const len2 = ABx*ABx + ABy*ABy;
+        let t = len2 === 0 ? 0 : ((-Ax*ABx + -Ay*ABy) / len2);
+        t = Math.max(0, Math.min(1, t));
+        const nx = Ax + ABx*t, ny = Ay + ABy*t;
+        const nLon = pos[1] + nx/kx, nLat = pos[0] + ny;
+        const perp = haversine(pos[0], pos[1], nLat, nLon);
+        if(perp < bestPerp){
+          bestPerp = perp;
+          const segLen = cumDist[i+1] - cumDist[i];
+          bestAlong = offset + cumDist[i] + t*segLen;
+        }
       }
-    }
+    });
 
     return {
       perpMeters: bestPerp,
@@ -937,14 +954,23 @@
   // close to the currently-drawn (active-direction) route line — since
   // inbound/outbound often run on different streets a block apart, this
   // keeps us from picking a same-name stop on the wrong side of the route.
-  function perpDistanceToPolyline(points, pos){
-    if(!points || points.length < 2) return Infinity;
+  // Distance from `pos` to the nearest point on any of `lines` (an array
+  // of point-arrays, i.e. currentRouteDirs[dir].lines). Each sub-line's
+  // segments are walked independently — this deliberately never creates a
+  // segment bridging the end of one piece to the start of another, since
+  // real route geometry is often made of several disconnected pieces and
+  // a bridging segment would make far-away stops look deceptively close.
+  function perpDistanceToLines(lines, pos){
+    if(!lines || !lines.length) return Infinity;
     let best = Infinity;
-    for(let i=0;i<points.length-1;i++){
-      const np = nearestPointOnSegment(pos, points[i], points[i+1]);
-      const d = haversine(pos[0], pos[1], np[0], np[1]);
-      if(d < best) best = d;
-    }
+    lines.forEach(points=>{
+      if(!points || points.length < 2) return;
+      for(let i=0;i<points.length-1;i++){
+        const np = nearestPointOnSegment(pos, points[i], points[i+1]);
+        const d = haversine(pos[0], pos[1], np[0], np[1]);
+        if(d < best) best = d;
+      }
+    });
     return best;
   }
 
@@ -959,19 +985,17 @@
   function pickNearestStop(stops, userPos){
     if(!stops.length || !userPos) return null;
 
-    const activePoints = (progressModel && progressModel.points.length > 1) ? progressModel.points : null;
+    const activeLines = (currentRouteDirs[activeDirection] && currentRouteDirs[activeDirection].lines) || null;
     const otherDir = activeDirection === 'I' ? 'O' : 'I';
-    const otherPoints = (currentRouteDirs[otherDir] && currentRouteDirs[otherDir].lines.length)
-      ? currentRouteDirs[otherDir].lines.reduce((acc,l)=>acc.concat(l), [])
-      : null;
+    const otherLines = (currentRouteDirs[otherDir] && currentRouteDirs[otherDir].lines) || null;
 
     const candidates = stops
       .map(s=>{
         const pos = [s.lat, s.lon];
         return {
           stop: s,
-          toActive: perpDistanceToPolyline(activePoints, pos),
-          toOther: perpDistanceToPolyline(otherPoints, pos),
+          toActive: perpDistanceToLines(activeLines, pos),
+          toOther: perpDistanceToLines(otherLines, pos),
           userDist: haversine(userPos[0], userPos[1], s.lat, s.lon)
         };
       })
