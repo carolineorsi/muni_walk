@@ -178,19 +178,11 @@
   #live-arrival-unit{font-size:12px;color:var(--muted);}
   #live-arrival-stop{font-size:12px;color:var(--muted);margin-top:2px;}
 
-  #live-list{margin-top:8px;display:none;flex-direction:column;gap:6px;max-height:150px;overflow-y:auto;}
-  #live-list.visible{display:flex;}
-  .live-row{
-    display:flex;align-items:center;justify-content:space-between;gap:8px;
-    background:var(--panel-2);border:1px solid var(--line-hair);border-radius:8px;
-    padding:7px 10px;font-size:12.5px;
+  #live-list{
+    margin-top:6px;display:none;
+    font-family:'Space Mono',monospace;font-size:12px;color:var(--muted);
   }
-  .live-row .veh-line{display:flex;align-items:center;gap:8px;min-width:0;}
-  .live-row .veh-dir-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;}
-  .live-row .veh-dir-dot.I{background:var(--inbound);}
-  .live-row .veh-dir-dot.O{background:var(--outbound);}
-  .live-row .veh-dest{color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .live-row .veh-eta{font-family:'Space Mono',monospace;font-weight:700;color:var(--amber);flex:0 0 auto;}
+  #live-list.visible{display:block;}
 
   .bus-marker{
     width:22px;height:22px;border-radius:50%;
@@ -249,6 +241,14 @@
   .end-marker{
     background:#0b0d10;color:var(--paper);font-family:'Space Mono',monospace;font-size:10px;
     padding:2px 6px;border-radius:4px;border:1px solid var(--line-hair);white-space:nowrap;
+  }
+  .route-arrow{
+    width:0;height:0;
+    border-left:5px solid transparent;
+    border-right:5px solid transparent;
+    border-bottom:11px solid var(--amber);
+    filter:drop-shadow(0 1px 2px rgba(0,0,0,.6));
+    transition:opacity .2s ease;
   }
 
   ::-webkit-scrollbar{width:8px;}
@@ -549,6 +549,7 @@
 
       const color = dir === 'I' ? getComputedColor('--inbound') : getComputedColor('--outbound');
       const layers = [];
+      const arrowMarkers = [];
 
       lines.forEach(latlngs=>{
         if(latlngs.length < 2) return;
@@ -562,6 +563,8 @@
           routeSegments.push({a:latlngs[i], b:latlngs[i+1]});
         }
 
+        arrowMarkers.push(...addDirectionArrows(latlngs, color));
+
         const startPt = latlngs[0];
         const label = dir === 'I' ? 'Inbound start' : 'Outbound start';
         L.marker(startPt, {
@@ -569,7 +572,7 @@
         }).addTo(routeLayerGroup);
       });
 
-      currentRouteDirs[dir] = { lines, layers };
+      currentRouteDirs[dir] = { lines, layers, arrowMarkers };
     });
 
     if(bounds.length){
@@ -582,6 +585,59 @@
 
     setupDirectionToggle();
     updateDistanceReadout();
+  }
+
+  // Compass bearing in degrees (0 = north, clockwise) from point a to b.
+  function computeBearingDeg(a, b){
+    const lat1 = a[0]*Math.PI/180, lat2 = b[0]*Math.PI/180;
+    const dLon = (b[1]-a[1])*Math.PI/180;
+    const y = Math.sin(dLon)*Math.cos(lat2);
+    const x = Math.cos(lat1)*Math.sin(lat2) - Math.sin(lat1)*Math.cos(lat2)*Math.cos(dLon);
+    return (Math.atan2(y,x)*180/Math.PI + 360) % 360;
+  }
+
+  function interpolateLatLng(a, b, t){
+    return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+  }
+
+  // Places small rotated chevron markers along a polyline, pointing in the
+  // direction of travel, spaced by real-world distance rather than by
+  // vertex count (so they land evenly whether the source geometry is
+  // sparse or dense).
+  function addDirectionArrows(latlngs, color){
+    const markers = [];
+    if(latlngs.length < 2) return markers;
+
+    const cum = [0];
+    for(let i=1;i<latlngs.length;i++){
+      cum.push(cum[i-1] + haversine(latlngs[i-1][0],latlngs[i-1][1], latlngs[i][0],latlngs[i][1]));
+    }
+    const total = cum[cum.length-1];
+    if(total <= 0) return markers;
+
+    const SPACING_METERS = 350;
+    const START_OFFSET_METERS = 150;
+
+    for(let d = START_OFFSET_METERS; d < total; d += SPACING_METERS){
+      let idx = 0;
+      while(idx < cum.length-2 && cum[idx+1] < d) idx++;
+      const segStart = cum[idx], segEnd = cum[idx+1];
+      const segLen = segEnd - segStart;
+      const t = segLen > 0 ? (d - segStart) / segLen : 0;
+      const a = latlngs[idx], b = latlngs[idx+1];
+      const pos = interpolateLatLng(a, b, t);
+      const bearing = computeBearingDeg(a, b);
+
+      const icon = L.divIcon({
+        className: '',
+        html: '<div class="route-arrow" style="transform:rotate(' + bearing + 'deg);border-bottom-color:' + color + ';"></div>',
+        iconSize: [14,14],
+        iconAnchor: [7,7]
+      });
+      const marker = L.marker(pos, { icon, interactive:false, keyboard:false, zIndexOffset:200 }).addTo(routeLayerGroup);
+      markers.push(marker);
+    }
+    return markers;
   }
 
   // ---------- Direction toggle ----------
@@ -637,6 +693,10 @@
       currentRouteDirs[d].layers.forEach(pl=>{
         pl.setStyle({ opacity: emphasize ? 0.95 : 0.3, weight: emphasize ? 6 : 4 });
         if(emphasize) pl.bringToFront();
+      });
+      (currentRouteDirs[d].arrowMarkers || []).forEach(m=>{
+        const el = m.getElement();
+        if(el) el.style.opacity = emphasize ? '1' : '0.28';
       });
     });
   }
@@ -728,8 +788,10 @@
   function directionMatches(directionRef, direction){
     if(!directionRef || !direction) return false;
     const d = String(directionRef).toUpperCase();
-    if(direction === 'I') return d.startsWith('I') || d === '1';
-    if(direction === 'O') return d.startsWith('O') || d === '0';
+    // Covers every DirectionRef form 511.org's own spec examples use for
+    // bus routes: "IB"/"OB", "Inbound"/"Outbound", "In"/"Out".
+    if(direction === 'I') return d.startsWith('I');
+    if(direction === 'O') return d.startsWith('O');
     return false;
   }
 
@@ -787,6 +849,19 @@
 
   // Same idea for MonitoredVehicleJourney entries — used by both
   // StopMonitoring (arrival predictions) and VehicleMonitoring (positions).
+  // 511.org's SIRI-derived JSON sometimes represents a ref as a plain
+  // string ("IB") and sometimes as an object with a .ref property
+  // ({"ref": "IB"}, mirroring the XML <DirectionRef ref="IB"/> form seen
+  // elsewhere in their spec). Normalize both to a plain string so
+  // matching logic never silently fails against an unexpected shape.
+  function refValue(x){
+    if(x == null) return null;
+    if(typeof x === 'string') return x;
+    if(typeof x === 'number') return String(x);
+    if(typeof x === 'object' && typeof x.ref === 'string') return x.ref;
+    return null;
+  }
+
   function extractJourneys(data){
     const out = [];
     function visit(node){
@@ -797,8 +872,8 @@
         const call = mvj.MonitoredCall || {};
         const loc = mvj.VehicleLocation || {};
         out.push({
-          lineRef: mvj.LineRef,
-          directionRef: mvj.DirectionRef,
+          lineRef: refValue(mvj.LineRef),
+          directionRef: refValue(mvj.DirectionRef),
           destination: mvj.DestinationName || mvj.PublishedLineName || '',
           expected: call.ExpectedArrivalTime || null,
           aimed: call.AimedArrivalTime || null,
@@ -938,23 +1013,14 @@
 
   function renderLiveList(arrivals){
     const list = document.getElementById('live-list');
-    list.innerHTML = '';
     if(!arrivals || !arrivals.length){
       list.classList.remove('visible');
+      list.textContent = '';
       return;
     }
     list.classList.add('visible');
-    arrivals.forEach(a=>{
-      const row = document.createElement('div');
-      row.className = 'live-row';
-      const dirClass = directionMatches(a.directionRef,'O') ? 'O' : 'I';
-      const label = a.mins <= 0 ? 'due' : (a.mins + ' min');
-      row.innerHTML =
-        '<span class="veh-line"><span class="veh-dir-dot ' + dirClass + '"></span>' +
-        '<span class="veh-dest">' + (a.destination || 'Next bus') + '</span></span>' +
-        '<span class="veh-eta">' + label + '</span>';
-      list.appendChild(row);
-    });
+    const text = arrivals.map(a => a.mins <= 0 ? 'due' : (a.mins + ' min')).join(', ');
+    list.textContent = 'Then: ' + text;
   }
 
   async function refreshLiveBuses(){
