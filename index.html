@@ -965,27 +965,49 @@
       ? currentRouteDirs[otherDir].lines.reduce((acc,l)=>acc.concat(l), [])
       : null;
 
-    const candidates = stops.map(s=>{
-      const pos = [s.lat, s.lon];
-      return {
-        stop: s,
-        toActive: perpDistanceToPolyline(activePoints, pos),
-        toOther: perpDistanceToPolyline(otherPoints, pos),
-        userDist: haversine(userPos[0], userPos[1], s.lat, s.lon)
-      };
-    });
+    const candidates = stops
+      .map(s=>{
+        const pos = [s.lat, s.lon];
+        return {
+          stop: s,
+          toActive: perpDistanceToPolyline(activePoints, pos),
+          toOther: perpDistanceToPolyline(otherPoints, pos),
+          userDist: haversine(userPos[0], userPos[1], s.lat, s.lon)
+        };
+      })
+      .filter(c => c.toActive < Infinity); // must sit near *some* point of the active-direction line at all
 
-    let pool = candidates.filter(c => c.toActive < 400 && c.toActive <= c.toOther);
-    if(!pool.length) pool = candidates.filter(c => c.toActive < 400);
-    if(!pool.length) pool = candidates; // last resort: nearest overall, no direction info at all
+    if(!candidates.length) return null;
+
+    // Direction relevance always wins over raw proximity to the user —
+    // there is deliberately no fallback path here that ignores direction,
+    // because that's exactly what previously let inbound and outbound
+    // silently resolve to the same physical stop. Priority order:
+    //   1. Stops clearly on the active line (closer to it than to the
+    //      other direction's line) and within a reasonable walk (500m).
+    //   2. If none qualify, stops within a reasonable walk of the active
+    //      line regardless of the other line's distance (handles routes
+    //      where we don't have the other direction's shape to compare).
+    //   3. Absolute last resort: whichever stop sits closest to the
+    //      active line, however far — never chosen by user-distance alone.
+    let pool = candidates.filter(c => c.toActive < 500 && c.toActive < c.toOther);
+    if(!pool.length) pool = candidates.filter(c => c.toActive < 500);
+    if(!pool.length){
+      candidates.sort((a,b) => a.toActive - b.toActive);
+      pool = [candidates[0]];
+    }
 
     pool.sort((a,b) => a.userDist - b.userDist);
     const best = pool[0];
-    if(!best) return null;
+
+    console.log('[muni-walker] nearest stop for ' + activeDirection + ':', best.stop.name, best.stop.code,
+      { toActiveLine_m: Math.round(best.toActive), toOtherLine_m: Math.round(best.toOther), toUser_m: Math.round(best.userDist) });
+
     return { ...best.stop, distMeters: best.userDist };
   }
 
   async function fetchNextArrivals(stopCode, routeName, direction){
+    console.log('[muni-walker] fetching StopMonitoring for stopcode=' + stopCode + ' direction=' + direction);
     const data = await fetchProxyJSON('StopMonitoring', { agency: 'SF', stopcode: stopCode });
     const now = Date.now();
     const journeys = extractJourneys(data)
