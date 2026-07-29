@@ -992,6 +992,12 @@
   // Each journey pattern: { directionRef, lineRef, stopIds: [...] }
   function extractJourneyPatterns(data){
     const out = [];
+    function toStopIds(points){
+      return points
+        .map(p => refValue(p.ScheduledStopPointRef) ?? (p.ScheduledStopPointRef != null ? String(p.ScheduledStopPointRef) : null))
+        .filter(Boolean)
+        .map(String);
+    }
     function visit(node){
       if(!node || typeof node !== 'object') return;
       if(Array.isArray(node)){ node.forEach(visit); return; }
@@ -999,11 +1005,10 @@
       if(node.DirectionRef != null && seq && typeof seq === 'object'){
         const timingPts = Array.isArray(seq.TimingPointInJourneyPattern) ? seq.TimingPointInJourneyPattern : [];
         const stopPts = Array.isArray(seq.StopPointInJourneyPattern) ? seq.StopPointInJourneyPattern : [];
-        const points = timingPts.length ? timingPts : stopPts;
-        const stopIds = points
-          .map(p => refValue(p.ScheduledStopPointRef) ?? (p.ScheduledStopPointRef != null ? String(p.ScheduledStopPointRef) : null))
-          .filter(Boolean)
-          .map(String);
+        // Both arrays can carry real, sometimes non-overlapping, stops for
+        // the pattern — union them rather than only using whichever one
+        // happens to be non-empty.
+        const stopIds = Array.from(new Set([...toStopIds(timingPts), ...toStopIds(stopPts)]));
         out.push({
           directionRef: String(refValue(node.DirectionRef) ?? node.DirectionRef),
           lineRef: refValue(node.LineRef),
