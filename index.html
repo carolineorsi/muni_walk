@@ -302,7 +302,7 @@
 
   <select id="basemap-select" title="Map style" aria-label="Map style">
     <option value="dark">Dark</option>
-    <option value="light">Light</option>
+    <option value="light" selected>Light</option>
     <option value="streets">Streets</option>
     <option value="satellite">Satellite</option>
   </select>
@@ -413,12 +413,35 @@
   let currentBasemapLayer = null;
   function setBasemap(key){
     const cfg = BASEMAPS[key] ? BASEMAPS[key] : BASEMAPS.dark;
-    if(currentBasemapLayer){ map.removeLayer(currentBasemapLayer); }
-    currentBasemapLayer = L.tileLayer(cfg.url, {
-      attribution: cfg.attribution,
-      maxZoom: cfg.maxZoom
-    }).addTo(map);
-    currentBasemapLayer.bringToBack();
+    const tileOptions = { attribution: cfg.attribution, maxZoom: cfg.maxZoom };
+    if(cfg.subdomains) tileOptions.subdomains = cfg.subdomains; // omit entirely if unset, rather than passing undefined
+
+    const oldLayer = currentBasemapLayer;
+    const newLayer = L.tileLayer(cfg.url, tileOptions);
+    currentBasemapLayer = newLayer;
+
+    newLayer.addTo(map);
+    newLayer.bringToBack();
+
+    // Don't remove the previous layer until the new one has actually
+    // finished loading its tiles (falling back to a timeout if 'load'
+    // never fires, e.g. a tile request errors out). Removing the old
+    // layer synchronously can yank a tile out from under an in-flight
+    // async decode, which is what was throwing the "Cannot read
+    // properties of undefined (reading 'length')" error — much more
+    // likely with satellite imagery since those tiles are far larger and
+    // slower to load than the other basemaps.
+    if(oldLayer){
+      let cleaned = false;
+      const cleanupOld = ()=>{
+        if(cleaned) return;
+        cleaned = true;
+        if(map.hasLayer(oldLayer)) map.removeLayer(oldLayer);
+      };
+      newLayer.once('load', cleanupOld);
+      setTimeout(cleanupOld, 2500);
+    }
+
     const select = document.getElementById('basemap-select');
     if(select && select.value !== key) select.value = key;
   }
@@ -638,9 +661,8 @@
       const lines = extractLinesFromShape(shapes[dir]);
       if(!lines.length) return;
 
-      const color = dir === 'I' ? getComputedColor('--inbound') : getComputedColor('--outbound');
       const layers = [];
-      const arrowMarkers = [];
+      const color = dir === 'I' ? getComputedColor('--inbound') : getComputedColor('--outbound');
 
       lines.forEach(latlngs=>{
         if(latlngs.length < 2) return;
@@ -654,8 +676,6 @@
           routeSegments.push({a:latlngs[i], b:latlngs[i+1]});
         }
 
-        arrowMarkers.push(...addDirectionArrows(latlngs, color));
-
         const startPt = latlngs[0];
         const label = dir === 'I' ? 'Inbound start' : 'Outbound start';
         L.marker(startPt, {
@@ -663,7 +683,7 @@
         }).addTo(routeLayerGroup);
       });
 
-      currentRouteDirs[dir] = { lines, layers, arrowMarkers };
+      currentRouteDirs[dir] = { lines, layers, arrowMarkers: [] };
     });
 
     if(bounds.length){
@@ -674,6 +694,7 @@
     document.getElementById('info-title').textContent = 'Route ' + friendlyName(routeName);
     document.getElementById('info-card').classList.add('visible');
 
+    rebuildArrowMarkers();
     setupDirectionToggle();
     updateDistanceReadout();
   }
@@ -716,7 +737,38 @@
     return 'rgb(' + r + ',' + g + ',' + b + ')';
   }
 
-  function addDirectionArrows(latlngs, color){
+  // Spacing and pixel size for direction arrows at a given map zoom level —
+  // fewer and smaller when zoomed out, denser and bigger when zoomed in.
+  // Values in between the table entries are linearly interpolated so the
+  // transition across zoom steps isn't abrupt.
+  const ARROW_ZOOM_TABLE = [
+    { zoom: 10, spacing: 3000, size: 10 },
+    { zoom: 12, spacing: 1800, size: 12 },
+    { zoom: 14, spacing: 950,  size: 16 },
+    { zoom: 16, spacing: 550,  size: 20 },
+    { zoom: 17, spacing: 400,  size: 22 },
+    { zoom: 18, spacing: 300,  size: 25 },
+    { zoom: 20, spacing: 180,  size: 30 }
+  ];
+
+  function arrowParamsForZoom(zoom){
+    const table = ARROW_ZOOM_TABLE;
+    if(zoom <= table[0].zoom) return { spacing: table[0].spacing, size: table[0].size };
+    if(zoom >= table[table.length-1].zoom) return { spacing: table[table.length-1].spacing, size: table[table.length-1].size };
+    for(let i=0;i<table.length-1;i++){
+      const a = table[i], b = table[i+1];
+      if(zoom >= a.zoom && zoom <= b.zoom){
+        const t = (zoom - a.zoom) / (b.zoom - a.zoom);
+        return {
+          spacing: a.spacing + (b.spacing - a.spacing) * t,
+          size: a.size + (b.size - a.size) * t
+        };
+      }
+    }
+    return { spacing: 650, size: 22 };
+  }
+
+  function addDirectionArrows(latlngs, color, spacingMeters, sizePx){
     const markers = [];
     if(latlngs.length < 2) return markers;
 
@@ -727,11 +779,14 @@
     const total = cum[cum.length-1];
     if(total <= 0) return markers;
 
-    const SPACING_METERS = 650;
-    const START_OFFSET_METERS = 200;
+    const startOffset = spacingMeters * 0.3;
     const arrowColor = darkenColor(color, 0.6);
+    // Triangle proportions match the original 22px design (9px side borders,
+    // 19px bottom border) scaled to whatever pixel size this zoom calls for.
+    const sideBorder = Math.max(2, Math.round(sizePx * 0.41));
+    const bottomBorder = Math.max(4, Math.round(sizePx * 0.86));
 
-    for(let d = START_OFFSET_METERS; d < total; d += SPACING_METERS){
+    for(let d = startOffset; d < total; d += spacingMeters){
       let idx = 0;
       while(idx < cum.length-2 && cum[idx+1] < d) idx++;
       const segStart = cum[idx], segEnd = cum[idx+1];
@@ -743,17 +798,42 @@
 
       const icon = L.divIcon({
         className: '',
-        html: '<div style="width:22px;height:22px;display:flex;align-items:center;justify-content:center;transform:rotate(' + bearing + 'deg);">' +
-              '<div class="route-arrow" style="border-bottom-color:' + arrowColor + ';"></div>' +
+        html: '<div style="width:' + sizePx + 'px;height:' + sizePx + 'px;display:flex;align-items:center;justify-content:center;transform:rotate(' + bearing + 'deg);">' +
+              '<div class="route-arrow" style="border-left-width:' + sideBorder + 'px;border-right-width:' + sideBorder + 'px;border-bottom-width:' + bottomBorder + 'px;border-bottom-color:' + arrowColor + ';"></div>' +
               '</div>',
-        iconSize: [22,22],
-        iconAnchor: [11,11]
+        iconSize: [sizePx, sizePx],
+        iconAnchor: [sizePx/2, sizePx/2]
       });
       const marker = L.marker(pos, { icon, interactive:false, keyboard:false, zIndexOffset:200 }).addTo(routeLayerGroup);
       markers.push(marker);
     }
     return markers;
   }
+
+  // Clears and redraws direction arrows for every direction at the current
+  // map zoom's spacing/size, then re-applies the active/inactive opacity so
+  // the toggle state (and stop-marker dimming) stays correct after a rezoom.
+  function rebuildArrowMarkers(){
+    const dirs = Object.keys(currentRouteDirs);
+    if(!dirs.length) return;
+
+    const { spacing, size } = arrowParamsForZoom(map.getZoom());
+
+    dirs.forEach(dir=>{
+      const info = currentRouteDirs[dir];
+      (info.arrowMarkers || []).forEach(m => routeLayerGroup.removeLayer(m));
+      const color = dir === 'I' ? getComputedColor('--inbound') : getComputedColor('--outbound');
+      const newMarkers = [];
+      info.lines.forEach(latlngs=>{
+        newMarkers.push(...addDirectionArrows(latlngs, color, spacing, size));
+      });
+      info.arrowMarkers = newMarkers;
+    });
+
+    if(activeDirection) applyActiveDirectionStyling();
+  }
+
+  map.on('zoomend', rebuildArrowMarkers);
 
   // ---------- Direction toggle ----------
   function setupDirectionToggle(){
