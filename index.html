@@ -416,7 +416,6 @@
     if(currentBasemapLayer){ map.removeLayer(currentBasemapLayer); }
     currentBasemapLayer = L.tileLayer(cfg.url, {
       attribution: cfg.attribution,
-      subdomains: cfg.subdomains,
       maxZoom: cfg.maxZoom
     }).addTo(map);
     currentBasemapLayer.bringToBack();
@@ -425,7 +424,7 @@
   }
 
   async function initBasemap(){
-    let key = 'dark';
+    let key = 'light';
     try{
       const saved = await window.storage.get('basemap-preference');
       if(saved && BASEMAPS[saved.value]) key = saved.value;
