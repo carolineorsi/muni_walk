@@ -499,6 +499,7 @@
     busLayerGroup.clearLayers();
     stopLayerGroup.clearLayers();
     stopMarkersDrawnForRoute = null;
+    stopMarkersInfo = [];
     routeSegments = [];
     routeBounds = null;
     currentRouteDirs = {};
@@ -735,6 +736,7 @@
         if(el) el.style.opacity = emphasize ? '1' : '0';
       });
     });
+    applyStopDirectionStyling();
   }
 
   // ---------- Along-route progress model ----------
@@ -1138,6 +1140,8 @@
   // selection). A stop belonging to both directions' patterns — which does
   // happen at some shared/terminal stops — gets a small half-and-half
   // marker rather than being arbitrarily assigned to one color.
+  let stopMarkersInfo = []; // [{ marker, isIn, isOut }] — used to dim/emphasize stops on direction toggle
+
   async function refreshStopMarkers(routeName){
     try{
       const stops = await ensureStopsForRoute(routeName);
@@ -1149,6 +1153,7 @@
       ]);
 
       stopLayerGroup.clearLayers();
+      stopMarkersInfo = [];
 
       stops.forEach(s=>{
         const code = String(s.code);
@@ -1169,13 +1174,30 @@
         }
 
         const icon = L.divIcon({ className: '', html, iconSize: size, iconAnchor: [size[0]/2, size[1]/2] });
-        L.marker([s.lat, s.lon], { icon, interactive: false, keyboard: false, zIndexOffset: 100 })
+        const marker = L.marker([s.lat, s.lon], { icon, interactive: false, keyboard: false, zIndexOffset: 100 })
           .bindTooltip(s.name, { direction: 'top', offset: [0,-6] })
           .addTo(stopLayerGroup);
+
+        stopMarkersInfo.push({ marker, isIn, isOut });
       });
+
+      applyStopDirectionStyling();
     }catch(e){
       console.warn('[muni-walker] Could not draw stop markers:', e);
     }
+  }
+
+  // Dims stops that don't belong to the active direction, matching the
+  // opacity treatment already used for the route line itself (0.95 active /
+  // 0.3 inactive). Stops serving both directions, and stops we couldn't
+  // classify at all, are left at full opacity rather than guessed at.
+  function applyStopDirectionStyling(){
+    stopMarkersInfo.forEach(({ marker, isIn, isOut })=>{
+      const el = marker.getElement();
+      if(!el) return;
+      const belongsToOther = (activeDirection === 'I' && isOut && !isIn) || (activeDirection === 'O' && isIn && !isOut);
+      el.style.opacity = belongsToOther ? '0.3' : '0.95';
+    });
   }
 
   function renderLiveStatus(text){
@@ -1235,6 +1257,7 @@
       busLayerGroup.clearLayers();
       stopLayerGroup.clearLayers();
       stopMarkersDrawnForRoute = null;
+      stopMarkersInfo = [];
       return;
     }
 
@@ -1308,6 +1331,7 @@
       busLayerGroup.clearLayers();
       stopLayerGroup.clearLayers();
       stopMarkersDrawnForRoute = null;
+      stopMarkersInfo = [];
     }
   }
 
