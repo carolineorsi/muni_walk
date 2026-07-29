@@ -954,80 +954,112 @@
   // close to the currently-drawn (active-direction) route line — since
   // inbound/outbound often run on different streets a block apart, this
   // keeps us from picking a same-name stop on the wrong side of the route.
-  // Distance from `pos` to the nearest point on any of `lines` (an array
-  // of point-arrays, i.e. currentRouteDirs[dir].lines). Each sub-line's
-  // segments are walked independently — this deliberately never creates a
-  // segment bridging the end of one piece to the start of another, since
-  // real route geometry is often made of several disconnected pieces and
-  // a bridging segment would make far-away stops look deceptively close.
-  function perpDistanceToLines(lines, pos){
-    if(!lines || !lines.length) return Infinity;
-    let best = Infinity;
-    lines.forEach(points=>{
-      if(!points || points.length < 2) return;
-      for(let i=0;i<points.length-1;i++){
-        const np = nearestPointOnSegment(pos, points[i], points[i+1]);
-        const d = haversine(pos[0], pos[1], np[0], np[1]);
-        if(d < best) best = d;
+  // ---------- Direction-specific stop list, straight from 511's Patterns API ----------
+  // Rather than inferring direction from our own drawn route line, this asks
+  // 511 directly which stops belong to which direction of a route — the
+  // Patterns API returns each direction's ordered stop sequence. See
+  // https://511.org (SF Bay Open Data Specification - Transit) section on
+  // the Patterns API for the response shape this parses.
+  let routeDirectionStopIdsCache = {}; // "routeName|I" or "routeName|O" -> Set of stop ids, or null if unknown
+
+  // {DirectionId: "Inbound"/"Outbound"/etc} from the top-level "directions" list.
+  function extractPatternDirectionNames(data){
+    const map = {};
+    function visit(node){
+      if(!node || typeof node !== 'object') return;
+      if(Array.isArray(node)){ node.forEach(visit); return; }
+      if(node.DirectionId != null && typeof node.Name === 'string'){
+        map[String(refValue(node.DirectionId) ?? node.DirectionId)] = node.Name;
       }
-    });
-    return best;
+      Object.values(node).forEach(visit);
+    }
+    visit(data);
+    return map;
   }
 
-  // Picks the stop nearest the user that actually belongs to the active
-  // direction. Rather than a flat "within N meters of the line" cutoff —
-  // which fails on one-way street couplets where inbound and outbound run
-  // on different streets a block or more apart — this compares each
-  // stop's distance to the active-direction line against its distance to
-  // the *other* direction's line, and only considers a stop "ours" if
-  // it's relatively closer to our line. That works regardless of how far
-  // apart the two streets are.
-  function pickNearestStop(stops, userPos){
-    if(!stops.length || !userPos) return null;
+  // Each journey pattern: { directionRef, lineRef, stopIds: [...] }
+  function extractJourneyPatterns(data){
+    const out = [];
+    function visit(node){
+      if(!node || typeof node !== 'object') return;
+      if(Array.isArray(node)){ node.forEach(visit); return; }
+      const seq = node.PointsInSequence;
+      if(node.DirectionRef != null && seq && typeof seq === 'object'){
+        const timingPts = Array.isArray(seq.TimingPointInJourneyPattern) ? seq.TimingPointInJourneyPattern : [];
+        const stopPts = Array.isArray(seq.StopPointInJourneyPattern) ? seq.StopPointInJourneyPattern : [];
+        const points = timingPts.length ? timingPts : stopPts;
+        const stopIds = points
+          .map(p => refValue(p.ScheduledStopPointRef) ?? (p.ScheduledStopPointRef != null ? String(p.ScheduledStopPointRef) : null))
+          .filter(Boolean)
+          .map(String);
+        out.push({
+          directionRef: String(refValue(node.DirectionRef) ?? node.DirectionRef),
+          lineRef: refValue(node.LineRef),
+          stopIds
+        });
+      } else {
+        Object.values(node).forEach(visit);
+      }
+    }
+    visit(data);
+    return out;
+  }
 
-    const activeLines = (currentRouteDirs[activeDirection] && currentRouteDirs[activeDirection].lines) || null;
-    const otherDir = activeDirection === 'I' ? 'O' : 'I';
-    const otherLines = (currentRouteDirs[otherDir] && currentRouteDirs[otherDir].lines) || null;
+  // Returns a Set of stop ids belonging to `direction` ('I'/'O') for this
+  // route, per 511's Patterns API — or null if that couldn't be determined
+  // (caller should fall back to the full stop list in that case).
+  async function ensureDirectionStopIds(routeName, direction){
+    const cacheKey = routeName + '|' + direction;
+    if(cacheKey in routeDirectionStopIdsCache) return routeDirectionStopIdsCache[cacheKey];
 
-    const candidates = stops
-      .map(s=>{
-        const pos = [s.lat, s.lon];
-        return {
-          stop: s,
-          toActive: perpDistanceToLines(activeLines, pos),
-          toOther: perpDistanceToLines(otherLines, pos),
-          userDist: haversine(userPos[0], userPos[1], s.lat, s.lon)
-        };
-      })
-      .filter(c => c.toActive < Infinity); // must sit near *some* point of the active-direction line at all
+    let result = null;
+    try{
+      const data = await fetchProxyJSON('patterns', { operator_id: 'SF', line_id: routeName });
+      const dirNames = extractPatternDirectionNames(data);       // {DirectionId: Name}
+      const patterns = extractJourneyPatterns(data)
+        .filter(p => !p.lineRef || matchesRoute(p.lineRef, routeName));
 
-    if(!candidates.length) return null;
+      // Prefer matching by the human-readable direction name ("Inbound"/
+      // "Outbound") from the top-level directions list; fall back to
+      // matching the DirectionRef text itself for feeds that skip names.
+      let targetIds = Object.keys(dirNames).filter(id=>{
+        const name = dirNames[id].toUpperCase();
+        return direction === 'I' ? name.startsWith('IN') : name.startsWith('OUT');
+      });
+      let relevant = targetIds.length
+        ? patterns.filter(p => targetIds.includes(p.directionRef))
+        : patterns.filter(p => directionMatches(p.directionRef, direction));
 
-    // Direction relevance always wins over raw proximity to the user —
-    // there is deliberately no fallback path here that ignores direction,
-    // because that's exactly what previously let inbound and outbound
-    // silently resolve to the same physical stop. Priority order:
-    //   1. Stops clearly on the active line (closer to it than to the
-    //      other direction's line) and within a reasonable walk (500m).
-    //   2. If none qualify, stops within a reasonable walk of the active
-    //      line regardless of the other line's distance (handles routes
-    //      where we don't have the other direction's shape to compare).
-    //   3. Absolute last resort: whichever stop sits closest to the
-    //      active line, however far — never chosen by user-distance alone.
-    let pool = candidates.filter(c => c.toActive < 500 && c.toActive < c.toOther);
-    if(!pool.length) pool = candidates.filter(c => c.toActive < 500);
-    if(!pool.length){
-      candidates.sort((a,b) => a.toActive - b.toActive);
-      pool = [candidates[0]];
+      const idSet = new Set();
+      relevant.forEach(p => p.stopIds.forEach(id => idSet.add(id)));
+
+      console.log('[muni-walker] patterns for route ' + routeName + ':', patterns.length,
+        'directions:', dirNames, '-> direction ' + direction + ' stop count:', idSet.size);
+
+      result = idSet.size ? idSet : null;
+    }catch(e){
+      console.warn('[muni-walker] Patterns API lookup failed, will use the full stop list instead:', e);
+      result = null;
     }
 
-    pool.sort((a,b) => a.userDist - b.userDist);
-    const best = pool[0];
+    routeDirectionStopIdsCache[cacheKey] = result;
+    return result;
+  }
 
-    console.log('[muni-walker] nearest stop for ' + activeDirection + ':', best.stop.name, best.stop.code,
-      { toActiveLine_m: Math.round(best.toActive), toOtherLine_m: Math.round(best.toOther), toUser_m: Math.round(best.userDist) });
-
-    return { ...best.stop, distMeters: best.userDist };
+  // Plain nearest-by-distance — no route-line geometry involved. Direction
+  // filtering already happened via ensureDirectionStopIds, so this just
+  // picks whichever of the (already direction-filtered) candidate stops is
+  // physically closest to the user.
+  function pickNearestStop(stops, userPos){
+    if(!stops || !stops.length || !userPos) return null;
+    let best = null, bestDist = Infinity;
+    stops.forEach(s=>{
+      const d = haversine(userPos[0], userPos[1], s.lat, s.lon);
+      if(d < bestDist){ bestDist = d; best = s; }
+    });
+    if(!best) return null;
+    console.log('[muni-walker] nearest stop for ' + activeDirection + ':', best.name, best.code, { toUser_m: Math.round(bestDist) });
+    return { ...best, distMeters: bestDist };
   }
 
   async function fetchNextArrivals(stopCode, routeName, direction){
@@ -1142,7 +1174,18 @@
         return;
       }
 
-      const stop = pickNearestStop(stops, lastPos);
+      const dirStopIds = await ensureDirectionStopIds(currentRouteName, activeDirection);
+      let candidateStops = stops;
+      if(dirStopIds){
+        const filtered = stops.filter(s => dirStopIds.has(String(s.code)));
+        if(filtered.length){
+          candidateStops = filtered;
+        }else{
+          console.warn('[muni-walker] direction-specific stop ids matched none of the fetched stops; using the full stop list instead');
+        }
+      }
+
+      const stop = pickNearestStop(candidateStops, lastPos);
       if(!stop){
         renderLiveStatus("Couldn't determine your nearest stop.");
         return;
