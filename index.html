@@ -227,6 +227,24 @@
   #locate-btn.following{background:var(--amber);border-color:var(--amber);color:#1a1204;}
   #locate-btn svg{width:22px;height:22px;}
 
+  #basemap-select{
+    position:absolute;right:14px;z-index:1000;
+    height:38px;
+    -webkit-appearance:none;appearance:none;
+    background:var(--panel);border:1px solid var(--line-hair);
+    color:var(--paper);
+    border-radius:19px;
+    padding:0 30px 0 14px;
+    font-family:'Inter';font-size:13px;font-weight:600;
+    box-shadow:0 8px 20px rgba(0,0,0,.4);
+    cursor:pointer;
+    background-image:linear-gradient(45deg, transparent 50%, var(--amber) 50%), linear-gradient(135deg, var(--amber) 50%, transparent 50%);
+    background-position: calc(100% - 16px) 50%, calc(100% - 10px) 50%;
+    background-size:5px 5px, 5px 5px;
+    background-repeat:no-repeat;
+  }
+  #basemap-select:focus{outline:2px solid var(--amber);outline-offset:1px;}
+
   /* ---------- empty state ---------- */
   #empty-hint{
     position:absolute;top:96px;left:14px;right:14px;z-index:900;
@@ -281,6 +299,13 @@
 
   <div id="empty-hint">Pick a line above to draw its route. Tap the compass to track your position and follow it on foot.</div>
   <div id="error-toast"></div>
+
+  <select id="basemap-select" title="Map style" aria-label="Map style">
+    <option value="dark">Dark</option>
+    <option value="light">Light</option>
+    <option value="streets">Streets</option>
+    <option value="satellite">Satellite</option>
+  </select>
 
   <button id="locate-btn" title="Follow my location" aria-label="Follow my location">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -357,10 +382,64 @@
   // ---------- Map setup ----------
   const map = L.map('map', {zoomControl:false, attributionControl:true}).setView([37.7749,-122.4194], 13);
   L.control.zoom({position:'bottomleft'}).addTo(map);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-    attribution:'&copy; OpenStreetMap contributors &copy; CARTO',
-    subdomains:'abcd', maxZoom:20
-  }).addTo(map);
+
+  const BASEMAPS = {
+    dark: {
+      label: 'Dark',
+      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      subdomains: 'abcd', maxZoom: 20
+    },
+    light: {
+      label: 'Light',
+      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
+      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+      subdomains: 'abcd', maxZoom: 20
+    },
+    streets: {
+      label: 'Streets',
+      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+      attribution: '&copy; OpenStreetMap contributors',
+      subdomains: 'abc', maxZoom: 19
+    },
+    satellite: {
+      label: 'Satellite',
+      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
+      maxZoom: 19
+    }
+  };
+
+  let currentBasemapLayer = null;
+  function setBasemap(key){
+    const cfg = BASEMAPS[key] ? BASEMAPS[key] : BASEMAPS.dark;
+    if(currentBasemapLayer){ map.removeLayer(currentBasemapLayer); }
+    currentBasemapLayer = L.tileLayer(cfg.url, {
+      attribution: cfg.attribution,
+      subdomains: cfg.subdomains,
+      maxZoom: cfg.maxZoom
+    }).addTo(map);
+    currentBasemapLayer.bringToBack();
+    const select = document.getElementById('basemap-select');
+    if(select && select.value !== key) select.value = key;
+  }
+
+  async function initBasemap(){
+    let key = 'dark';
+    try{
+      const saved = await window.storage.get('basemap-preference');
+      if(saved && BASEMAPS[saved.value]) key = saved.value;
+    }catch(e){ /* no saved preference yet, or storage unavailable — use default */ }
+    setBasemap(key);
+  }
+
+  document.getElementById('basemap-select').addEventListener('change', async (e)=>{
+    const key = e.target.value;
+    setBasemap(key);
+    try{ await window.storage.set('basemap-preference', key); }catch(e){ /* non-fatal — just won't persist */ }
+  });
+
+  initBasemap();
 
   let routeLayerGroup = L.layerGroup().addTo(map);
   let routeSegments = []; // flat array of {a:[lat,lon], b:[lat,lon]} for distance calc
@@ -1374,7 +1453,8 @@
   function positionHeadsignOffsets(){
     const hs = document.getElementById('headsign');
     const h = hs.getBoundingClientRect().height;
-    locateBtn.style.top = (h + 14) + 'px';
+    document.getElementById('basemap-select').style.top = (h + 14) + 'px';
+    locateBtn.style.top = (h + 14 + 38 + 10) + 'px';
     document.getElementById('error-toast').style.top = (h + 14) + 'px';
     document.getElementById('empty-hint').style.top = (h + 14) + 'px';
   }
