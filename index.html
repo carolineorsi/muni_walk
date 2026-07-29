@@ -194,6 +194,15 @@
   .bus-marker.I{border-color:var(--inbound);color:var(--inbound);}
   .bus-marker.O{border-color:var(--outbound);color:var(--outbound);}
 
+  .stop-dot{
+    width:10px;height:10px;border-radius:50%;
+    background:var(--inbound);
+    border:2px solid #0b0d10;
+    box-shadow:0 1px 4px rgba(0,0,0,.5);
+  }
+  .stop-dot.O{background:var(--outbound);}
+  .stop-dot.unknown{background:var(--muted);}
+
   .stat{
     font-family:'Space Mono',monospace;
     font-size:13px;color:var(--paper);
@@ -357,6 +366,7 @@
   let routeSegments = []; // flat array of {a:[lat,lon], b:[lat,lon]} for distance calc
   let routeBounds = null;
   let busLayerGroup = L.layerGroup().addTo(map);
+  let stopLayerGroup = L.layerGroup().addTo(map);
 
   // ---------- Fallback route list (used only if the live route list fails to load) ----------
   const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
@@ -487,6 +497,8 @@
   async function loadRoute(routeName){
     routeLayerGroup.clearLayers();
     busLayerGroup.clearLayers();
+    stopLayerGroup.clearLayers();
+    stopMarkersDrawnForRoute = null;
     routeSegments = [];
     routeBounds = null;
     currentRouteDirs = {};
@@ -1008,17 +1020,37 @@
   // Returns a Set of stop ids belonging to `direction` ('I'/'O') for this
   // route, per 511's Patterns API — or null if that couldn't be determined
   // (caller should fall back to the full stop list in that case).
-  async function ensureDirectionStopIds(routeName, direction){
-    const cacheKey = routeName + '|' + direction;
-    if(cacheKey in routeDirectionStopIdsCache) return routeDirectionStopIdsCache[cacheKey];
+  let routePatternsCache = {}; // routeName -> { dirNames, patterns } | null
+
+  async function ensureRoutePatterns(routeName){
+    if(routeName in routePatternsCache) return routePatternsCache[routeName];
 
     let result = null;
     try{
       const data = await fetchProxyJSON('patterns', { operator_id: 'SF', line_id: routeName });
-      const dirNames = extractPatternDirectionNames(data);       // {DirectionId: Name}
+      const dirNames = extractPatternDirectionNames(data); // {DirectionId: Name}
       const patterns = extractJourneyPatterns(data)
         .filter(p => !p.lineRef || matchesRoute(p.lineRef, routeName));
+      console.log('[muni-walker] patterns for route ' + routeName + ':', patterns.length, 'directions:', dirNames);
+      result = { dirNames, patterns };
+    }catch(e){
+      console.warn('[muni-walker] Patterns API lookup failed:', e);
+      result = null;
+    }
 
+    routePatternsCache[routeName] = result;
+    return result;
+  }
+
+  async function ensureDirectionStopIds(routeName, direction){
+    const cacheKey = routeName + '|' + direction;
+    if(cacheKey in routeDirectionStopIdsCache) return routeDirectionStopIdsCache[cacheKey];
+
+    const routeInfo = await ensureRoutePatterns(routeName);
+    let result = null;
+
+    if(routeInfo){
+      const { dirNames, patterns } = routeInfo;
       // Prefer matching by the human-readable direction name ("Inbound"/
       // "Outbound") from the top-level directions list; fall back to
       // matching the DirectionRef text itself for feeds that skip names.
@@ -1032,14 +1064,8 @@
 
       const idSet = new Set();
       relevant.forEach(p => p.stopIds.forEach(id => idSet.add(id)));
-
-      console.log('[muni-walker] patterns for route ' + routeName + ':', patterns.length,
-        'directions:', dirNames, '-> direction ' + direction + ' stop count:', idSet.size);
-
+      console.log('[muni-walker] direction ' + direction + ' stop count for route ' + routeName + ':', idSet.size);
       result = idSet.size ? idSet : null;
-    }catch(e){
-      console.warn('[muni-walker] Patterns API lookup failed, will use the full stop list instead:', e);
-      result = null;
     }
 
     routeDirectionStopIdsCache[cacheKey] = result;
@@ -1099,6 +1125,54 @@
     }
   }
 
+  let stopMarkersDrawnForRoute = null;
+
+  // Draws every stop for the route, color-coded to match the route lines:
+  // blue for inbound, red for outbound (using the same direction-specific
+  // stop-id sets, from 511's Patterns API, that now drive nearest-stop
+  // selection). A stop belonging to both directions' patterns — which does
+  // happen at some shared/terminal stops — gets a small half-and-half
+  // marker rather than being arbitrarily assigned to one color.
+  async function refreshStopMarkers(routeName){
+    try{
+      const stops = await ensureStopsForRoute(routeName);
+      if(!stops.length) return;
+
+      const [inboundIds, outboundIds] = await Promise.all([
+        ensureDirectionStopIds(routeName, 'I'),
+        ensureDirectionStopIds(routeName, 'O')
+      ]);
+
+      stopLayerGroup.clearLayers();
+
+      stops.forEach(s=>{
+        const code = String(s.code);
+        const isIn = inboundIds && inboundIds.has(code);
+        const isOut = outboundIds && outboundIds.has(code);
+
+        let html, size;
+        if(isIn && isOut){
+          html = '<div style="width:12px;height:12px;border-radius:50%;overflow:hidden;display:flex;border:2px solid #0b0d10;box-shadow:0 1px 4px rgba(0,0,0,.5);">' +
+                 '<div style="width:50%;background:var(--inbound);"></div>' +
+                 '<div style="width:50%;background:var(--outbound);"></div>' +
+                 '</div>';
+          size = [12,12];
+        }else{
+          const cls = isIn ? 'I' : (isOut ? 'O' : 'unknown');
+          html = '<div class="stop-dot ' + cls + '"></div>';
+          size = [10,10];
+        }
+
+        const icon = L.divIcon({ className: '', html, iconSize: size, iconAnchor: [size[0]/2, size[1]/2] });
+        L.marker([s.lat, s.lon], { icon, interactive: false, keyboard: false, zIndexOffset: 100 })
+          .bindTooltip(s.name, { direction: 'top', offset: [0,-6] })
+          .addTo(stopLayerGroup);
+      });
+    }catch(e){
+      console.warn('[muni-walker] Could not draw stop markers:', e);
+    }
+  }
+
   function renderLiveStatus(text){
     const el = document.getElementById('live-status');
     el.textContent = text || '';
@@ -1154,6 +1228,8 @@
       renderLiveStatus('');
       renderLiveArrival(null, null, false);
       busLayerGroup.clearLayers();
+      stopLayerGroup.clearLayers();
+      stopMarkersDrawnForRoute = null;
       return;
     }
 
@@ -1163,6 +1239,11 @@
     }
 
     refreshVehiclePositions(currentRouteName);
+
+    if(stopMarkersDrawnForRoute !== currentRouteName){
+      stopMarkersDrawnForRoute = currentRouteName;
+      refreshStopMarkers(currentRouteName);
+    }
 
     if(!lastPos) return;
 
@@ -1220,6 +1301,8 @@
       renderLiveStatus('');
       renderLiveArrival(null, null, false);
       busLayerGroup.clearLayers();
+      stopLayerGroup.clearLayers();
+      stopMarkersDrawnForRoute = null;
     }
   }
 
