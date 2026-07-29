@@ -1677,6 +1677,8 @@
     el.textContent = parts.join(' · ');
   }
 
+  const PROGRESS_VISIBILITY_RADIUS_METERS = 0.5 * 1609.344; // half a mile
+
   function updateProgressReadout(pos){
     const block = document.getElementById('progress-block');
     const milesEl = document.getElementById('progress-miles');
@@ -1684,27 +1686,20 @@
     const fillEl = document.getElementById('progress-fill');
     const heading = block.querySelector('.stat-label');
 
-    if(!activeDirection || !progressModel){
+    function hide(){
       block.classList.remove('visible');
-      return;
-    }
-    block.classList.add('visible');
-    heading.textContent = 'Progress along route (' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ')';
-
-    if(!pos){
       milesEl.textContent = '—';
       pctEl.textContent = '—';
       fillEl.style.width = '0%';
-      return;
     }
+
+    if(!activeDirection || !progressModel || !pos){ hide(); return; }
 
     const p = computeProgress(pos);
-    if(!p){
-      milesEl.textContent = '—';
-      pctEl.textContent = '—';
-      fillEl.style.width = '0%';
-      return;
-    }
+    if(!p || p.perpMeters > PROGRESS_VISIBILITY_RADIUS_METERS){ hide(); return; }
+
+    block.classList.add('visible');
+    heading.textContent = 'Progress along route (' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ')';
 
     const miles = p.alongMeters / 1609.344;
     const pct = Math.max(0, Math.min(100, p.pct));
