@@ -17,6 +17,10 @@ GPS position against it, and shows live buses running that route.
 - **Live buses** — toggle live tracking to see real-time vehicle positions
   for the selected route and direction, plus the next predicted arrival at
   your nearest stop.
+- **Find along the route** — type a free-text request ("restaurants",
+  "historical sites", "cozy coffee shops") and get points of interest
+  plotted on the map, filtered to within 1/4 mile of the route. Tap a pin
+  for its name, address, and a short AI-written description.
 - **Basemap switcher** — choose between dark, light, streets, and satellite
   map styles.
 
@@ -30,14 +34,26 @@ The app is a static site — no build step, no backend of its own.
 - Live vehicle positions and stop arrival predictions come from
   [511.org](https://511.org)'s Transit API, proxied through a small
   Cloudflare Worker that keeps the API key server-side.
+- "Find along the route" combines two data sources: a Cloudflare Worker
+  (`worker/`) that holds an Anthropic API key server-side and turns your
+  free-text request into OpenStreetMap tag filters (and later writes short
+  descriptions of the results), and [OpenStreetMap's Overpass
+  API](https://overpass-api.de/), queried directly by the browser, for the
+  actual place data — names, coordinates, and addresses. The AI never
+  invents a location; it only interprets intent and describes real places
+  it's given. Results are filtered client-side to those within 1/4 mile of
+  the drawn route line. See `worker/README.md` to deploy it.
 
 ## Project structure
 
 ```
-index.html        Page markup
-css/style.css      All styles
-js/routes-data.js  Embedded fallback route geometry
-js/app.js          App logic (map, GPS, live buses, UI)
+index.html                  Page markup
+css/style.css                All styles
+js/routes-data.js            Embedded fallback route geometry
+js/app.js                    App logic (map, GPS, live buses, POI search, UI)
+worker/ai-search-worker.js   Cloudflare Worker for the "Find along the route" AI proxy
+worker/wrangler.toml         Worker deploy config
+worker/README.md             Worker deploy instructions
 ```
 
 To run it locally, just serve the directory with any static file server

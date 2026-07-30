@@ -143,6 +143,66 @@
   .progress-fill{height:100%;width:0%;background:linear-gradient(90deg, var(--amber-dim), var(--amber));transition:width .3s ease;}
   #progress-sub{font-size:11px;color:var(--muted);margin-top:6px;}
 
+  /* ---------- Find along the route (AI POI search) ---------- */
+  #poi-search-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);}
+  #poi-search-form{display:flex;gap:8px;margin-top:6px;}
+  #poi-search-input{
+    flex:1 1 auto;min-width:0;
+    background:#161a1f;color:var(--paper);
+    border:1px solid var(--line-hair);border-radius:8px;
+    padding:9px 12px;
+    font-family:'Inter';font-size:13.5px;
+  }
+  #poi-search-input::placeholder{color:var(--muted);}
+  #poi-search-input:focus{outline:2px solid var(--amber);outline-offset:1px;}
+  #poi-search-btn{
+    flex:0 0 auto;width:38px;height:38px;border-radius:8px;
+    background:var(--amber);border:none;color:#1a1204;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+  }
+  #poi-search-btn svg{width:17px;height:17px;}
+  #poi-search-btn:disabled{opacity:.5;cursor:default;}
+  #poi-search-status{font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;display:none;}
+  #poi-search-status.visible{display:block;}
+  #poi-search-status.error{color:#f0a3a3;}
+  #poi-search-result-row{
+    display:none;align-items:center;justify-content:space-between;
+    margin-top:8px;
+  }
+  #poi-search-result-row.visible{display:flex;}
+  #poi-search-result-count{font-family:'Space Mono',monospace;font-size:11.5px;color:var(--muted);}
+  #poi-clear-btn{
+    background:none;border:none;color:var(--amber);
+    font-family:'Inter';font-size:12px;font-weight:600;
+    cursor:pointer;padding:2px 4px;
+  }
+
+  .poi-marker{
+    width:26px;height:26px;
+    display:flex;align-items:center;justify-content:center;
+    transform:translateY(-4px);
+  }
+  .poi-marker-pin{
+    width:22px;height:22px;border-radius:50% 50% 50% 0;
+    transform:rotate(-45deg);
+    background:var(--amber);border:2px solid #0b0d10;
+    box-shadow:0 2px 8px rgba(0,0,0,.5);
+    display:flex;align-items:center;justify-content:center;
+  }
+  .poi-marker-pin span{
+    transform:rotate(45deg);
+    font-size:11px;line-height:1;
+  }
+  .poi-popup .leaflet-popup-content-wrapper{
+    background:var(--panel);color:var(--paper);
+    border:1px solid var(--line-hair);border-radius:10px;
+  }
+  .poi-popup .leaflet-popup-tip{background:var(--panel);border:1px solid var(--line-hair);}
+  .poi-popup .leaflet-popup-content{margin:12px 14px;min-width:180px;}
+  .poi-popup-title{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1.2;}
+  .poi-popup-address{font-size:11.5px;color:var(--muted);margin-top:4px;font-family:'Space Mono',monospace;}
+  .poi-popup-desc{font-size:12.5px;margin-top:8px;line-height:1.45;}
+
   /* ---------- Live buses ---------- */
   #live-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);}
   .live-heading{display:flex;justify-content:space-between;align-items:center;}

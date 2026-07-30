@@ -55,6 +55,24 @@
     <div id="info-card-body">
     <div id="direction-toggle"></div>
 
+    <div id="poi-search-block">
+      <span class="stat-label">Find along the route</span>
+      <form id="poi-search-form" autocomplete="off">
+        <input id="poi-search-input" type="text" placeholder="restaurants, parks, historical sites…" maxlength="80">
+        <button id="poi-search-btn" type="submit" title="Search" aria-label="Search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="7"></circle>
+            <path d="M21 21l-4.3-4.3"></path>
+          </svg>
+        </button>
+      </form>
+      <div id="poi-search-status"></div>
+      <div id="poi-search-result-row">
+        <span id="poi-search-result-count"></span>
+        <button id="poi-clear-btn" type="button">Clear</button>
+      </div>
+    </div>
+
     <div id="live-block">
       <div class="live-heading">
         <span class="stat-label">Live buses</span>

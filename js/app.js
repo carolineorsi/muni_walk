@@ -91,6 +91,7 @@
   let busLayerGroup = L.layerGroup().addTo(map);
   let stopLayerGroup = L.layerGroup().addTo(map);
   let nearestStopLayerGroup = L.layerGroup().addTo(map);
+  let poiLayerGroup = L.layerGroup().addTo(map);
 
   // ---------- Fallback route list (used only if the live route list fails to load) ----------
   const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
@@ -157,6 +158,16 @@
   // Cloudflare Worker proxy that holds the 511.org API key server-side.
   // See the muni-511-proxy project for the Worker source.
   const PROXY_BASE = "https://muni-walk.caroline-orsi.workers.dev/";
+
+  // Cloudflare Worker proxy that holds the Anthropic API key server-side,
+  // used only to (1) turn a free-text "find ___" request into OpenStreetMap
+  // tag filters and (2) write short descriptions of the results it's given.
+  // It never returns coordinates itself — those always come straight from
+  // OpenStreetMap's Overpass API below. Source: worker/ai-search-worker.js;
+  // update this URL after deploying it (see worker/README.md).
+  const AI_PROXY_BASE = "https://muni-walk-ai-search.caroline-orsi.workers.dev/";
+
+  const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
 
   // ---------- Embedded route shapes ----------
   // EMBEDDED_ROUTES comes from routes-data.js, loaded before this script.
@@ -260,6 +271,9 @@
     stopMarkersDrawnForRoute = null;
     stopMarkersInfo = [];
     nearestStopInfo = null;
+    clearPoiResults();
+    poiSearchToken++; // invalidate any in-flight search from the previous route
+    document.getElementById('poi-search-input').value = '';
     routeSegments = [];
     routeBounds = null;
     currentRouteDirs = {};
@@ -1184,6 +1198,268 @@
   }
 
   document.getElementById('live-toggle').addEventListener('click', ()=> setLiveEnabled(!liveEnabled));
+
+  // =====================================================================
+  // "Find ___ along the route" — AI-assisted point-of-interest search.
+  //
+  // Pipeline: free text -> AI proxy turns it into OpenStreetMap tag filters
+  // -> Overpass API (real, keyless OSM data) returns candidate places in a
+  // box around the route -> filtered down to those actually within 1/4
+  // mile of the drawn route line -> AI proxy writes a one-line description
+  // for the results shown. The AI never invents a location: coordinates
+  // and addresses always come straight from OpenStreetMap.
+  // =====================================================================
+  const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
+  const POI_MAX_RESULTS = 40;                // cap on markers plotted
+  const POI_DESCRIBE_CAP = 30;               // matches the worker's own cap
+
+  let poiSearchToken = 0; // bumped to invalidate stale in-flight searches
+
+  async function fetchAIProxyJSON(action, payload){
+    const res = await fetch(AI_PROXY_BASE, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, ...payload })
+    });
+    if(!res.ok){
+      const detail = await res.text().catch(()=> '');
+      throw new Error('AI search proxy ' + action + ' failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    }
+    return res.json();
+  }
+
+  async function fetchOverpass(query){
+    const res = await fetch(OVERPASS_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: 'data=' + encodeURIComponent(query)
+    });
+    if(!res.ok){
+      const detail = await res.text().catch(()=> '');
+      throw new Error('Overpass request failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    }
+    const data = await res.json();
+    return Array.isArray(data.elements) ? data.elements : [];
+  }
+
+  function escapeOverpassString(s){
+    return String(s).replace(/["\\]/g, '\\$&');
+  }
+
+  // groups: OR of AND-groups of {key,value} tag filters, from the AI proxy's
+  // 'interpret' response. bbox: {south,west,north,east}.
+  function buildOverpassQuery(groups, bbox){
+    const bboxStr = bbox.south + ',' + bbox.west + ',' + bbox.north + ',' + bbox.east;
+    const clauses = groups.map(group=>{
+      const tagClauses = group.map(f=>{
+        if(!f || !f.key) return '';
+        if(!f.value || f.value === '*') return '["' + escapeOverpassString(f.key) + '"]';
+        return '["' + escapeOverpassString(f.key) + '"="' + escapeOverpassString(f.value) + '"]';
+      }).join('');
+      return '  nwr' + tagClauses + '(' + bboxStr + ');';
+    }).join('\n');
+    return '[out:json][timeout:25];\n(\n' + clauses + '\n);\nout center 100;';
+  }
+
+  // Route bounds padded out by the search radius (plus a little slack) so
+  // Overpass results near the edge of the drawn route aren't clipped before
+  // the real point-to-route distance filter runs.
+  function routeBBoxPadded(){
+    if(!routeBounds) return null;
+    const padMeters = POI_RADIUS_METERS + 150;
+    const south = routeBounds.getSouth(), north = routeBounds.getNorth();
+    const west = routeBounds.getWest(), east = routeBounds.getEast();
+    const midLat = (south + north) / 2;
+    const latPad = padMeters / 111320;
+    const lonPad = padMeters / (111320 * Math.cos(midLat * Math.PI / 180));
+    return { south: south - latPad, north: north + latPad, west: west - lonPad, east: east + lonPad };
+  }
+
+  // Nearest distance from pos to any segment of the currently-drawn route
+  // (both directions), reusing the same point-to-segment math as the
+  // distance-to-route readout.
+  function distanceToRouteMeters(pos){
+    if(!routeSegments.length) return Infinity;
+    let best = Infinity;
+    for(let i=0;i<routeSegments.length;i++){
+      const seg = routeSegments[i];
+      const np = nearestPointOnSegment(pos, seg.a, seg.b);
+      const d = haversine(pos[0], pos[1], np[0], np[1]);
+      if(d < best) best = d;
+    }
+    return best;
+  }
+
+  const POI_ICON_RULES = [
+    { test: t => /restaurant|fast_food|food_court/.test(t.amenity||''), icon:'🍴' },
+    { test: t => /cafe/.test(t.amenity||''), icon:'☕' },
+    { test: t => /bar|pub|nightclub/.test(t.amenity||''), icon:'🍺' },
+    { test: t => t.amenity === 'place_of_worship', icon:'⛪' },
+    { test: t => !!t.shop, icon:'🛍️' },
+    { test: t => t.tourism === 'museum', icon:'🏛️' },
+    { test: t => !!t.tourism, icon:'📷' },
+    { test: t => !!t.historic, icon:'🏺' },
+    { test: t => t.leisure === 'park' || t.leisure === 'garden', icon:'🌳' },
+    { test: t => !!t.leisure, icon:'🎡' }
+  ];
+  function iconForTags(tags){
+    for(const rule of POI_ICON_RULES){ if(rule.test(tags)) return rule.icon; }
+    return '📍';
+  }
+
+  function formatAddress(tags){
+    if(!tags) return null;
+    const num = tags['addr:housenumber'];
+    const street = tags['addr:street'];
+    const city = tags['addr:city'] || 'San Francisco';
+    let line = null;
+    if(num && street) line = num + ' ' + street;
+    else if(street) line = street;
+    if(!line) return null;
+    return line + ', ' + city;
+  }
+
+  function categoryFallbackDescription(tags){
+    const cat = tags.amenity || tags.shop || tags.tourism || tags.historic || tags.leisure;
+    return cat ? ('A ' + String(cat).replace(/_/g,' ') + '.') : 'A point of interest along the route.';
+  }
+
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderPoiStatus(text, isError){
+    const el = document.getElementById('poi-search-status');
+    el.textContent = text || '';
+    el.classList.toggle('visible', !!text);
+    el.classList.toggle('error', !!isError);
+  }
+
+  function renderPoiResultRow(shown, total){
+    const row = document.getElementById('poi-search-result-row');
+    const countEl = document.getElementById('poi-search-result-count');
+    if(!shown){
+      row.classList.remove('visible');
+      countEl.textContent = '';
+      return;
+    }
+    row.classList.add('visible');
+    countEl.textContent = shown === total
+      ? (shown + (shown === 1 ? ' place found' : ' places found'))
+      : ('Showing ' + shown + ' of ' + total + ' found');
+  }
+
+  function clearPoiResults(){
+    poiLayerGroup.clearLayers();
+    renderPoiResultRow(0,0);
+    renderPoiStatus('');
+  }
+
+  document.getElementById('poi-clear-btn').addEventListener('click', ()=>{
+    clearPoiResults();
+    poiSearchToken++; // invalidate any in-flight search
+  });
+
+  async function runPoiSearch(rawQuery){
+    const query = (rawQuery || '').trim();
+    if(!query) return;
+    if(!currentRouteName || !routeBounds){
+      renderPoiStatus('Pick a route first.', true);
+      return;
+    }
+
+    const token = ++poiSearchToken;
+    const btn = document.getElementById('poi-search-btn');
+    btn.disabled = true;
+    clearPoiResults();
+    renderPoiStatus('Thinking about "' + query + '"…');
+
+    try{
+      const plan = await fetchAIProxyJSON('interpret', { query });
+      if(token !== poiSearchToken) return;
+      if(!plan || !Array.isArray(plan.queries) || !plan.queries.length){
+        renderPoiStatus("Couldn't figure out how to search for that — try being more specific.", true);
+        return;
+      }
+
+      renderPoiStatus('Searching OpenStreetMap for ' + (plan.label || query) + '…');
+      const bbox = routeBBoxPadded();
+      const overpassQuery = buildOverpassQuery(plan.queries, bbox);
+      const elements = await fetchOverpass(overpassQuery);
+      if(token !== poiSearchToken) return;
+
+      const seen = new Set();
+      const candidates = [];
+      elements.forEach(el=>{
+        const lat = el.lat != null ? el.lat : (el.center && el.center.lat);
+        const lon = el.lon != null ? el.lon : (el.center && el.center.lon);
+        const tags = el.tags || {};
+        const name = tags.name;
+        if(lat == null || lon == null || !name) return;
+        const id = el.type + '/' + el.id;
+        if(seen.has(id)) return;
+        seen.add(id);
+        candidates.push({ id, name, lat, lon, tags });
+      });
+
+      candidates.forEach(c => { c.distMeters = distanceToRouteMeters([c.lat, c.lon]); });
+      const inRange = candidates
+        .filter(c => c.distMeters <= POI_RADIUS_METERS)
+        .sort((a,b) => a.distMeters - b.distMeters);
+
+      if(!inRange.length){
+        renderPoiStatus('No ' + (plan.label || query) + ' found within 1/4 mile of this route.', false);
+        return;
+      }
+
+      const shown = inRange.slice(0, POI_MAX_RESULTS);
+
+      renderPoiStatus('Writing descriptions…');
+      const descById = {};
+      try{
+        const describePayload = shown.slice(0, POI_DESCRIBE_CAP).map(c => ({ id: c.id, name: c.name, tags: c.tags }));
+        const descResult = await fetchAIProxyJSON('describe', { query, points: describePayload });
+        if(token !== poiSearchToken) return;
+        (descResult.descriptions || []).forEach(d => { descById[d.id] = d.description; });
+      }catch(e){
+        console.warn('[muni-walker] AI descriptions unavailable:', e);
+        // Non-fatal — points still get plotted with a generic fallback description.
+      }
+      if(token !== poiSearchToken) return;
+
+      poiLayerGroup.clearLayers();
+      shown.forEach(c=>{
+        const icon = L.divIcon({
+          className: '',
+          html: '<div class="poi-marker"><div class="poi-marker-pin"><span>' + iconForTags(c.tags) + '</span></div></div>',
+          iconSize: [26,26], iconAnchor: [13,26]
+        });
+        const address = formatAddress(c.tags) || 'Address unavailable';
+        const desc = descById[c.id] || categoryFallbackDescription(c.tags);
+        const popupHtml =
+          '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
+          '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
+          '<div class="poi-popup-desc">' + escapeHtml(desc) + '</div>';
+        L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
+          .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 240 })
+          .addTo(poiLayerGroup);
+      });
+
+      renderPoiStatus('');
+      renderPoiResultRow(shown.length, inRange.length);
+    }catch(e){
+      if(token !== poiSearchToken) return;
+      console.error('[muni-walker] POI search failed:', e);
+      renderPoiStatus('Search failed: ' + (e.message || e) + '. Is the AI search Worker deployed and reachable?', true);
+    }finally{
+      if(token === poiSearchToken) btn.disabled = false;
+    }
+  }
+
+  document.getElementById('poi-search-form').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    runPoiSearch(document.getElementById('poi-search-input').value);
+  });
 
   function getComputedColor(varName){
     return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
