@@ -196,10 +196,11 @@
 
   .stop-highlight-ring{
     width:22px;height:22px;border-radius:50%;
-    border:3px solid var(--amber);
+    border:3px solid var(--outbound);
     box-sizing:border-box;
     animation:stop-highlight-pulse 2.2s ease-in-out infinite;
   }
+  .stop-highlight-ring.I{border-color:var(--inbound);}
   @keyframes stop-highlight-pulse{
     0%,100%{ transform:scale(1); opacity:.9; }
     50%{ transform:scale(1.5); opacity:.2; }
