@@ -969,9 +969,10 @@
       nearestStopHighlightMarker = null;
     }
     if(!liveEnabled || !nearestStopInfo) return;
+    const dirClass = activeDirection === 'I' ? ' I' : '';
     const icon = L.divIcon({
       className: '',
-      html: '<div class="stop-highlight-ring"></div>',
+      html: '<div class="stop-highlight-ring' + dirClass + '"></div>',
       iconSize: [22,22],
       iconAnchor: [11,11]
     });
