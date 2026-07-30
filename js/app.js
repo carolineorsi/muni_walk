@@ -94,6 +94,63 @@
   // ---------- Fallback route list (used only if the live route list fails to load) ----------
   const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
 
+  // ---------- Route names ----------
+  // Maps a route's base code (after stripping the trailing "BUS" used for
+  // rail-replacement shapes) to its public display name, e.g. "1" -> "California".
+  // Variant suffixes (X/R/AX/BX) share the base line's name.
+  const ROUTE_NAMES = {
+    "1":"California", "1X":"California Express",
+    "2":"Clement",
+    "3":"Jackson",
+    "5":"Fulton", "5R":"Fulton Rapid",
+    "6":"Hayes/Parnassus",
+    "7":"Haight/Noriega", "7X":"Noriega Express",
+    "8":"Bayshore", "8AX":"Bayshore A Express", "8BX":"Bayshore B Express",
+    "9":"San Bruno", "9R":"San Bruno Rapid",
+    "10":"Townsend",
+    "12":"Folsom/Pacific",
+    "14":"Mission", "14R":"Mission Rapid", "14X":"Mission Express",
+    "15":"Bayview Hunters Point Express",
+    "18":"46th Avenue",
+    "19":"Polk",
+    "21":"Hayes",
+    "22":"Fillmore",
+    "23":"Monterey",
+    "24":"Divisadero",
+    "25":"Treasure Island",
+    "27":"Bryant",
+    "28":"19th Avenue", "28R":"19th Avenue Rapid",
+    "29":"Sunset",
+    "30":"Stockton",
+    "31":"Balboa",
+    "33":"Ashbury/18th St",
+    "35":"Eureka",
+    "36":"Teresita",
+    "37":"Corbett",
+    "38":"Geary", "38R":"Geary Rapid",
+    "39":"Coit",
+    "43":"Masonic",
+    "44":"O'Shaughnessy",
+    "45":"Union/Stockton",
+    "48":"Quintara/24th Street",
+    "49":"Van Ness/Mission",
+    "52":"Excelsior",
+    "54":"Felton",
+    "55":"16th Street",
+    "56":"Rutland",
+    "57":"Parkmerced",
+    "58":"Lake Merced",
+    "66":"Quintara",
+    "67":"Bernal Heights",
+    "714":"BART Early Bird",
+    "J":"Church",
+    "K":"Ingleside",
+    "L":"Taraval",
+    "M":"Ocean View",
+    "N":"Judah",
+    "T":"Third Street"
+  };
+
   const DATA_BASE = "https://data.sfgov.org/resource/9exe-acju.json";
 
   // Cloudflare Worker proxy that holds the 511.org API key server-side.
@@ -107,6 +164,12 @@
   function friendlyName(code){
     // strip trailing BUS used for rail-replacement bus shapes, keep raw letter for rail lines
     return code.replace(/BUS$/,'');
+  }
+
+  function routeDisplayLabel(code){
+    const shortName = friendlyName(code);
+    const name = ROUTE_NAMES[shortName];
+    return name ? shortName + ' - ' + name : shortName;
   }
 
   // ---------- Populate route dropdown ----------
@@ -130,7 +193,7 @@
     sortRoutes(routes).forEach(r=>{
       const opt = document.createElement('option');
       opt.value = r;
-      opt.textContent = friendlyName(r);
+      opt.textContent = routeDisplayLabel(r);
       select.appendChild(opt);
     });
   }
@@ -284,7 +347,7 @@
       map.fitBounds(routeBounds, {padding:[60,60]});
     }
 
-    document.getElementById('info-title').textContent = 'Route ' + friendlyName(routeName);
+    document.getElementById('info-title').textContent = routeDisplayLabel(routeName);
     document.getElementById('info-card').classList.add('visible');
 
     rebuildArrowMarkers();
