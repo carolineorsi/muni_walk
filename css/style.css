@@ -141,6 +141,7 @@
   #progress-pct{font-family:'Space Mono',monospace;font-weight:700;font-size:15px;color:var(--amber);}
   .progress-track{margin-top:8px;height:8px;border-radius:5px;background:#0e1116;border:1px solid var(--line-hair);overflow:hidden;}
   .progress-fill{height:100%;width:0%;background:linear-gradient(90deg, var(--amber-dim), var(--amber));transition:width .3s ease;}
+  #progress-sub{font-size:11px;color:var(--muted);margin-top:6px;}
 
   /* ---------- Live buses ---------- */
   #live-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);}

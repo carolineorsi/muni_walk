@@ -1373,6 +1373,7 @@
     const milesEl = document.getElementById('progress-miles');
     const pctEl = document.getElementById('progress-pct');
     const fillEl = document.getElementById('progress-fill');
+    const subEl = document.getElementById('progress-sub');
     const heading = block.querySelector('.stat-label');
 
     function hide(){
@@ -1380,6 +1381,7 @@
       milesEl.textContent = '—';
       pctEl.textContent = '—';
       fillEl.style.width = '0%';
+      subEl.textContent = '— mi total · — mi remaining';
     }
 
     if(!activeDirection || !progressModel || !pos){ hide(); return; }
@@ -1391,10 +1393,13 @@
     heading.textContent = 'Progress along route (' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ')';
 
     const miles = p.alongMeters / 1609.344;
+    const totalMiles = p.totalMeters / 1609.344;
+    const remainingMiles = Math.max(0, totalMiles - miles);
     const pct = Math.max(0, Math.min(100, p.pct));
     milesEl.textContent = miles.toFixed(1);
     pctEl.textContent = pct.toFixed(1) + '%';
     fillEl.style.width = pct.toFixed(1) + '%';
+    subEl.textContent = totalMiles.toFixed(1) + ' mi total · ' + remainingMiles.toFixed(1) + ' mi remaining';
   }
 
   // periodically refresh readout even without new GPS fixes (e.g. after switching routes)
