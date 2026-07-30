@@ -90,6 +90,7 @@
   let routeBounds = null;
   let busLayerGroup = L.layerGroup().addTo(map);
   let stopLayerGroup = L.layerGroup().addTo(map);
+  let nearestStopLayerGroup = L.layerGroup().addTo(map);
 
   // ---------- Fallback route list (used only if the live route list fails to load) ----------
   const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
@@ -255,8 +256,10 @@
     routeLayerGroup.clearLayers();
     busLayerGroup.clearLayers();
     stopLayerGroup.clearLayers();
+    nearestStopLayerGroup.clearLayers();
     stopMarkersDrawnForRoute = null;
     stopMarkersInfo = [];
+    nearestStopInfo = null;
     routeSegments = [];
     routeBounds = null;
     currentRouteDirs = {};
@@ -955,6 +958,27 @@
   // happen at some shared/terminal stops — gets a small half-and-half
   // marker rather than being arbitrarily assigned to one color.
   let stopMarkersInfo = []; // [{ marker, isIn, isOut }] — used to dim/emphasize stops on direction toggle
+  let nearestStopHighlightMarker = null; // slowly-pulsing ring drawn over the nearest stop while live buses are on
+
+  // Draws (or removes) the pulsing ring over nearestStopInfo. Lives in its
+  // own layer group so refreshStopMarkers()'s stopLayerGroup.clearLayers()
+  // (run every time the stop list is rebuilt) doesn't wipe it out.
+  function updateNearestStopHighlight(){
+    if(nearestStopHighlightMarker){
+      nearestStopLayerGroup.removeLayer(nearestStopHighlightMarker);
+      nearestStopHighlightMarker = null;
+    }
+    if(!liveEnabled || !nearestStopInfo) return;
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="stop-highlight-ring"></div>',
+      iconSize: [22,22],
+      iconAnchor: [11,11]
+    });
+    nearestStopHighlightMarker = L.marker([nearestStopInfo.lat, nearestStopInfo.lon], {
+      icon, interactive: false, keyboard: false, zIndexOffset: 90
+    }).addTo(nearestStopLayerGroup);
+  }
 
   async function refreshStopMarkers(routeName){
     try{
@@ -1072,6 +1096,8 @@
       stopLayerGroup.clearLayers();
       stopMarkersDrawnForRoute = null;
       stopMarkersInfo = [];
+      nearestStopInfo = null;
+      updateNearestStopHighlight();
       return;
     }
 
@@ -1094,6 +1120,8 @@
       const stops = await ensureStopsForRoute(currentRouteName);
       if(!stops.length){
         renderLiveStatus("Couldn't find stops for this route from 511.org.");
+        nearestStopInfo = null;
+        updateNearestStopHighlight();
         return;
       }
 
@@ -1111,9 +1139,12 @@
       const stop = pickNearestStop(candidateStops, lastPos);
       if(!stop){
         renderLiveStatus("Couldn't determine your nearest stop.");
+        nearestStopInfo = null;
+        updateNearestStopHighlight();
         return;
       }
       nearestStopInfo = stop;
+      updateNearestStopHighlight();
 
       const now = Date.now();
       const stale = stop.code !== lastArrivalFetch.stopCode || (now - lastArrivalFetch.time) > 30000;
@@ -1146,6 +1177,8 @@
       stopLayerGroup.clearLayers();
       stopMarkersDrawnForRoute = null;
       stopMarkersInfo = [];
+      nearestStopInfo = null;
+      updateNearestStopHighlight();
     }
   }
 

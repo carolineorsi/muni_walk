@@ -193,6 +193,17 @@
   .stop-dot.O{background:var(--outbound);}
   .stop-dot.unknown{background:var(--muted);}
 
+  .stop-highlight-ring{
+    width:22px;height:22px;border-radius:50%;
+    border:3px solid var(--amber);
+    box-sizing:border-box;
+    animation:stop-highlight-pulse 2.2s ease-in-out infinite;
+  }
+  @keyframes stop-highlight-pulse{
+    0%,100%{ transform:scale(1); opacity:.9; }
+    50%{ transform:scale(1.5); opacity:.2; }
+  }
+
   .stat{
     font-family:'Space Mono',monospace;
     font-size:13px;color:var(--paper);
