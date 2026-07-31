@@ -23,27 +23,89 @@
 //     -> { descriptions: [{id, description}, ...] }
 //     `points` should be capped client-side (<=30) — each one costs tokens.
 //
+// Cost controls: only the app's own origin may call this (checked against
+// the ALLOWED_ORIGINS var below), and every request is rate-limited both
+// per-IP and with a hard daily global cap (via the RATE_LIMIT_KV binding)
+// so a scraper that finds this URL and calls it directly — bypassing the
+// browser and any CORS check entirely — still can't run up an unbounded
+// bill. Also set a spend limit on the Anthropic Console itself as a backstop
+// that doesn't depend on this Worker's logic at all. See README.md.
+//
 // Deploy:
 //   1. npm install -g wrangler   (if you don't have it already)
-//   2. wrangler secret put ANTHROPIC_API_KEY     (paste your key when prompted)
-//   3. wrangler deploy
-//   4. Copy the deployed *.workers.dev URL into AI_PROXY_BASE in js/app.js
+//   2. wrangler kv namespace create RATE_LIMIT_KV
+//      -> paste the returned id into the [[kv_namespaces]] block in wrangler.toml
+//   3. wrangler secret put ANTHROPIC_API_KEY     (paste your key when prompted)
+//   4. Edit the [vars] block in wrangler.toml: ALLOWED_ORIGINS should list
+//      every origin this Worker should accept calls from (comma-separated).
+//   5. wrangler deploy
+//   6. Copy the deployed *.workers.dev URL into AI_PROXY_BASE in js/app.js
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const MODEL = "claude-haiku-4-5-20251001";
 const MAX_POINTS_PER_DESCRIBE = 30;
+const DEFAULT_MAX_REQUESTS_PER_MINUTE_PER_IP = 12;
+const DEFAULT_MAX_DAILY_REQUESTS = 400;
 
-const CORS_HEADERS = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-};
+function parseAllowedOrigins(env) {
+  return String(env.ALLOWED_ORIGINS || "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
 
-function jsonResponse(body, status = 200) {
+function corsHeadersFor(origin) {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    Vary: "Origin",
+  };
+}
+
+function jsonResponse(body, status, extraHeaders) {
   return new Response(JSON.stringify(body), {
-    status,
-    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
+    status: status || 200,
+    headers: { "Content-Type": "application/json", ...(extraHeaders || {}) },
   });
+}
+
+// Best-effort — Workers KV reads/writes aren't atomic, so under heavy
+// concurrent abuse a few requests could slip past the exact limit. That's
+// fine here: this is a deterrent against runaway cost, not a precise
+// billing meter (the real backstop is the spend limit on the Anthropic
+// Console — see README.md).
+async function checkAndIncrementRateLimit(env, request) {
+  const ip = request.headers.get("CF-Connecting-IP") || "unknown";
+  const now = Date.now();
+  const minuteBucket = Math.floor(now / 60000);
+  const ipKey = `ip:${ip}:${minuteBucket}`;
+  const dayBucket = new Date(now).toISOString().slice(0, 10); // UTC YYYY-MM-DD
+  const globalKey = `global:${dayBucket}`;
+
+  const [ipCountStr, globalCountStr] = await Promise.all([
+    env.RATE_LIMIT_KV.get(ipKey),
+    env.RATE_LIMIT_KV.get(globalKey),
+  ]);
+  const ipCount = parseInt(ipCountStr || "0", 10);
+  const globalCount = parseInt(globalCountStr || "0", 10);
+
+  const maxPerIp = parseInt(env.MAX_REQUESTS_PER_MINUTE_PER_IP, 10) || DEFAULT_MAX_REQUESTS_PER_MINUTE_PER_IP;
+  const maxGlobal = parseInt(env.MAX_DAILY_REQUESTS, 10) || DEFAULT_MAX_DAILY_REQUESTS;
+
+  if (globalCount >= maxGlobal) {
+    return { ok: false, reason: "This app's daily AI search limit has been reached — try again tomorrow." };
+  }
+  if (ipCount >= maxPerIp) {
+    return { ok: false, reason: "Too many searches — wait a minute and try again." };
+  }
+
+  await Promise.all([
+    env.RATE_LIMIT_KV.put(ipKey, String(ipCount + 1), { expirationTtl: 120 }),
+    env.RATE_LIMIT_KV.put(globalKey, String(globalCount + 1), { expirationTtl: 90000 }),
+  ]);
+
+  return { ok: true };
 }
 
 const TAG_FILTER_SCHEMA = {
@@ -130,9 +192,9 @@ async function callClaude(env, { system, userText, tool }) {
   return toolUse.input;
 }
 
-async function handleInterpret(env, body) {
+async function handleInterpret(env, body, corsHeaders) {
   const query = String(body.query || "").trim().slice(0, 200);
-  if (!query) return jsonResponse({ error: "Missing 'query'" }, 400);
+  if (!query) return jsonResponse({ error: "Missing 'query'" }, 400, corsHeaders);
 
   const result = await callClaude(env, {
     system:
@@ -142,13 +204,13 @@ async function handleInterpret(env, body) {
     tool: INTERPRET_TOOL,
   });
 
-  return jsonResponse(result);
+  return jsonResponse(result, 200, corsHeaders);
 }
 
-async function handleDescribe(env, body) {
+async function handleDescribe(env, body, corsHeaders) {
   const query = String(body.query || "").trim().slice(0, 200);
   const points = Array.isArray(body.points) ? body.points.slice(0, MAX_POINTS_PER_DESCRIBE) : [];
-  if (!points.length) return jsonResponse({ descriptions: [] });
+  if (!points.length) return jsonResponse({ descriptions: [] }, 200, corsHeaders);
 
   const pointsForModel = points.map((p) => ({
     id: String(p.id),
@@ -168,34 +230,53 @@ async function handleDescribe(env, body) {
     tool: DESCRIBE_TOOL,
   });
 
-  return jsonResponse(result);
+  return jsonResponse(result, 200, corsHeaders);
 }
 
 export default {
   async fetch(request, env) {
+    const origin = request.headers.get("Origin");
+    const originOk = !!origin && parseAllowedOrigins(env).includes(origin);
+
     if (request.method === "OPTIONS") {
-      return new Response(null, { headers: CORS_HEADERS });
+      // Preflight: only hand back CORS headers (which is what lets the
+      // browser proceed with the real request) for an allowed origin.
+      return originOk ? new Response(null, { headers: corsHeadersFor(origin) }) : new Response(null, { status: 403 });
     }
     if (request.method !== "POST") {
-      return jsonResponse({ error: "Use POST" }, 405);
+      return jsonResponse({ error: "Use POST" }, 405, originOk ? corsHeadersFor(origin) : {});
+    }
+    // No CORS headers on a rejected origin: a browser from elsewhere can't
+    // read this response anyway, and there's no reason to hand back
+    // permissive headers to a non-browser caller either.
+    if (!originOk) {
+      return jsonResponse({ error: "Origin not allowed" }, 403, {});
     }
     if (!env.ANTHROPIC_API_KEY) {
-      return jsonResponse({ error: "Worker is missing the ANTHROPIC_API_KEY secret" }, 500);
+      return jsonResponse({ error: "Worker is missing the ANTHROPIC_API_KEY secret" }, 500, corsHeadersFor(origin));
+    }
+    if (!env.RATE_LIMIT_KV) {
+      return jsonResponse({ error: "Worker is missing the RATE_LIMIT_KV binding" }, 500, corsHeadersFor(origin));
+    }
+
+    const rl = await checkAndIncrementRateLimit(env, request);
+    if (!rl.ok) {
+      return jsonResponse({ error: rl.reason }, 429, corsHeadersFor(origin));
     }
 
     let body;
     try {
       body = await request.json();
     } catch (e) {
-      return jsonResponse({ error: "Invalid JSON body" }, 400);
+      return jsonResponse({ error: "Invalid JSON body" }, 400, corsHeadersFor(origin));
     }
 
     try {
-      if (body.action === "interpret") return await handleInterpret(env, body);
-      if (body.action === "describe") return await handleDescribe(env, body);
-      return jsonResponse({ error: "Unknown action; expected 'interpret' or 'describe'" }, 400);
+      if (body.action === "interpret") return await handleInterpret(env, body, corsHeadersFor(origin));
+      if (body.action === "describe") return await handleDescribe(env, body, corsHeadersFor(origin));
+      return jsonResponse({ error: "Unknown action; expected 'interpret' or 'describe'" }, 400, corsHeadersFor(origin));
     } catch (e) {
-      return jsonResponse({ error: String((e && e.message) || e) }, 502);
+      return jsonResponse({ error: String((e && e.message) || e) }, 502, corsHeadersFor(origin));
     }
   },
 };

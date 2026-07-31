@@ -1,3 +1,17 @@
 name = "muni-walk-ai-search"
 main = "ai-search-worker.js"
 compatibility_date = "2024-09-01"
+
+# Only requests whose browser Origin header is in this list are served.
+# Add more origins (comma-separated) for local dev, e.g.:
+#   ALLOWED_ORIGINS = "https://carolineorsi.github.io,http://localhost:8000"
+[vars]
+ALLOWED_ORIGINS = "https://carolineorsi.github.io"
+MAX_REQUESTS_PER_MINUTE_PER_IP = "12"
+MAX_DAILY_REQUESTS = "400"
+
+# Create with: wrangler kv namespace create RATE_LIMIT_KV
+# then paste the "id" it prints below.
+[[kv_namespaces]]
+binding = "RATE_LIMIT_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
