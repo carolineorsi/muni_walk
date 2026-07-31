@@ -22,6 +22,14 @@
 //   { action: "describe", query: "tacos", points: [{id, name, tags}, ...] }
 //     -> { descriptions: [{id, description}, ...] }
 //     `points` should be capped client-side (<=30) — each one costs tokens.
+//     Internally this is two model calls: a research pass with the web_search
+//     tool enabled (tool_choice "auto", so it's free to actually search) that
+//     writes free-text notes per place, then a forced structured-output pass
+//     that turns those notes into the strict per-id JSON schema. It's two
+//     calls because a forced tool_choice (needed for the strict JSON output)
+//     locks the model to *only* that tool — it can't also call web_search in
+//     the same request. Web search is billed per use, separately from token
+//     cost — see the Cost controls section in README.md.
 //
 // Cost controls: only the app's own origin may call this (checked against
 // the ALLOWED_ORIGINS var below), and every request is rate-limited both
@@ -46,6 +54,10 @@ const MODEL = "claude-haiku-4-5-20251001";
 const MAX_POINTS_PER_DESCRIBE = 30;
 const DEFAULT_MAX_REQUESTS_PER_MINUTE_PER_IP = 12;
 const DEFAULT_MAX_DAILY_REQUESTS = 400;
+// Basic (non-dynamic-filtering) web search tool — the newer web_search_20260209
+// variant requires Opus/Sonnet-tier models; Haiku only supports this one.
+const WEB_SEARCH_TOOL_TYPE = "web_search_20250305";
+const DEFAULT_WEB_SEARCH_MAX_USES = 10;
 
 function parseAllowedOrigins(env) {
   return String(env.ALLOWED_ORIGINS || "")
@@ -163,7 +175,7 @@ const DESCRIBE_TOOL = {
   },
 };
 
-async function callClaude(env, { system, userText, tool }) {
+async function callClaudeRaw(env, { system, userText, tools, toolChoice, maxTokens }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -173,11 +185,11 @@ async function callClaude(env, { system, userText, tool }) {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: maxTokens || 1024,
       system,
       messages: [{ role: "user", content: userText }],
-      tools: [tool],
-      tool_choice: { type: "tool", name: tool.name },
+      tools,
+      tool_choice: toolChoice,
     }),
   });
 
@@ -186,10 +198,52 @@ async function callClaude(env, { system, userText, tool }) {
     throw new Error(`Anthropic API error ${res.status}: ${detail.slice(0, 300)}`);
   }
 
-  const data = await res.json();
+  return res.json();
+}
+
+// Forces a specific tool call and returns its parsed input — used for every
+// strict-schema response (interpret, and the structuring half of describe).
+async function callClaude(env, { system, userText, tool, maxTokens }) {
+  const data = await callClaudeRaw(env, {
+    system,
+    userText,
+    tools: [tool],
+    toolChoice: { type: "tool", name: tool.name },
+    maxTokens,
+  });
   const toolUse = (data.content || []).find((b) => b.type === "tool_use" && b.name === tool.name);
   if (!toolUse) throw new Error("Model did not return the expected tool call");
   return toolUse.input;
+}
+
+// Lets the model freely decide whether/how much to search — a forced
+// tool_choice (as callClaude uses) would lock it to *only* web_search and
+// prevent it from writing the actual notes. Returns the plain research text;
+// non-fatal for the caller if it comes back empty (e.g. no useful hits).
+async function researchPlaces(env, query, points) {
+  const pointsForModel = points.map((p) => ({ id: String(p.id), name: p.name || null, tags: p.tags || {} }));
+  const maxUses = parseInt(env.WEB_SEARCH_MAX_USES, 10) || DEFAULT_WEB_SEARCH_MAX_USES;
+
+  const data = await callClaudeRaw(env, {
+    system:
+      "You research real places for a walking-tour app, using web search. For each place listed, search the web for genuine, " +
+      "specific details — what it's known for, specialty dishes or products, notable history, atmosphere. Only report facts you " +
+      "actually find in search results; if a search turns up nothing specific for a place, say so briefly rather than inventing " +
+      "anything. Be selective — skip searching for places that are self-explanatory from their name and category. Write your " +
+      "findings as short plain-text notes grouped by id.",
+    userText:
+      `The user searched for: "${query}"\n\n` +
+      `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
+      `Research each place and write brief notes per id.`,
+    tools: [{ type: WEB_SEARCH_TOOL_TYPE, name: "web_search", max_uses: maxUses }],
+    toolChoice: { type: "auto" },
+    maxTokens: 2048,
+  });
+
+  return (data.content || [])
+    .filter((b) => b.type === "text")
+    .map((b) => b.text)
+    .join("\n\n");
 }
 
 async function handleInterpret(env, body, corsHeaders) {
@@ -218,14 +272,26 @@ async function handleDescribe(env, body, corsHeaders) {
     tags: p.tags || {},
   }));
 
+  // Research is best-effort: a web-search failure (rate limited, no results,
+  // transient error) shouldn't break descriptions — just fall back to
+  // tag-only grounding, same as before this feature existed.
+  let researchNotes = "";
+  try {
+    researchNotes = await researchPlaces(env, query, points);
+  } catch (e) {
+    console.warn("[ai-search-worker] research step failed, falling back to tags only:", e);
+  }
+
   const result = await callClaude(env, {
     system:
-      "You write short, factual one-sentence descriptions of places for a walking-tour app, based ONLY on the OpenStreetMap " +
-      "name/tags given to you. Never invent details (no made-up hours, ratings, prices, or history) beyond what the tags imply. " +
-      "If tags are sparse, write a plain sentence describing the category, e.g. 'A neighborhood cafe.'",
+      "You write short, factual one-sentence descriptions of places for a walking-tour app, grounded ONLY in the OpenStreetMap " +
+      "name/tags and the research notes given to you. Never invent details (no made-up hours, ratings, prices, or history) beyond " +
+      "what the tags or notes support. If a place has no research notes and sparse tags, write a plain sentence describing its " +
+      "category, e.g. 'A neighborhood cafe.'",
     userText:
       `The user searched for: "${query}"\n\n` +
       `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
+      (researchNotes ? `Research notes (from web search):\n${researchNotes}\n\n` : "") +
       `Write one description per id.`,
     tool: DESCRIBE_TOOL,
   });

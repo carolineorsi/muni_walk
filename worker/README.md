@@ -7,7 +7,17 @@ things:
 1. **`interpret`** — turns a free-text request ("tacos", "historical
    sites") into OpenStreetMap tag filters.
 2. **`describe`** — given a batch of already-found places (name + OSM tags),
-   writes a short, grounded one-sentence description for each.
+   writes a short, grounded one-sentence description for each. Internally
+   this is two model calls: first a research pass with the `web_search`
+   tool enabled, so the model can look up real details about each place
+   (specialties, history, atmosphere) instead of guessing from tags alone;
+   then a forced structured-output pass that turns those notes into the
+   strict per-place JSON the app expects. Two calls are needed because a
+   forced tool call (required for reliable JSON) can't also use
+   `web_search` in the same request — see the comment at the top of
+   `ai-search-worker.js`. If the research call fails for any reason, it
+   falls back to description-from-tags-only rather than failing the whole
+   search.
 
 It never returns coordinates on its own — those always come straight from
 OpenStreetMap's Overpass API, queried directly by the browser. See
@@ -34,6 +44,15 @@ against that:
 Both limits are enforced with a Workers KV counter, which is best-effort
 (not perfectly atomic under heavy concurrency) — fine for deterring abuse,
 not a precise billing meter.
+
+**Web search adds its own per-use cost, on top of tokens.** Each `describe`
+call now does a research pass with the `web_search` tool, which Anthropic
+bills per search performed — separately from the usual per-token pricing
+(check your [Anthropic Console](https://console.anthropic.com) for current
+rates). `WEB_SEARCH_MAX_USES` in `wrangler.toml` (default 10) bounds how
+many searches the model can make in a single `describe` call, regardless of
+how many places are in the batch — lower it if you want a tighter cost
+ceiling per search.
 
 **The real backstop** doesn't live in this Worker at all: set a spend limit
 on your [Anthropic Console](https://console.anthropic.com) under Settings →

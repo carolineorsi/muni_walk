@@ -9,6 +9,10 @@ compatibility_date = "2024-09-01"
 ALLOWED_ORIGINS = "https://carolineorsi.github.io"
 MAX_REQUESTS_PER_MINUTE_PER_IP = "12"
 MAX_DAILY_REQUESTS = "400"
+# Caps how many real web searches the model can make per "describe" call
+# (a batch of up to 30 places, capped by MAX_POINTS_PER_DESCRIBE in the
+# worker code). Web search is billed per use, on top of token cost.
+WEB_SEARCH_MAX_USES = "10"
 
 # Create with: wrangler kv namespace create RATE_LIMIT_KV
 # then paste the "id" it prints below.

@@ -1428,7 +1428,7 @@
 
       const shown = inRange.slice(0, POI_MAX_RESULTS);
 
-      renderPoiStatus('Writing descriptions…');
+      renderPoiStatus('Researching and writing descriptions…');
       const descById = {};
       try{
         const describePayload = shown.slice(0, POI_DESCRIBE_CAP).map(c => ({ id: c.id, name: c.name, tags: c.tags }));
