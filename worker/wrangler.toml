@@ -14,4 +14,4 @@ MAX_DAILY_REQUESTS = "400"
 # then paste the "id" it prints below.
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
-id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+id = "056087de22c54c15a25da84897f11178"
