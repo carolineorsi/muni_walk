@@ -1216,14 +1216,28 @@
   let poiSearchToken = 0; // bumped to invalidate stale in-flight searches
 
   async function fetchAIProxyJSON(action, payload){
-    const res = await fetch(AI_PROXY_BASE, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action, ...payload })
-    });
+    let res;
+    try{
+      res = await fetch(AI_PROXY_BASE, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...payload })
+      });
+    }catch(e){
+      // fetch() itself threw — a real network/DNS failure, distinct from an
+      // HTTP error response the worker sent back on purpose.
+      throw new Error("Couldn't reach the AI search Worker. Is it deployed, and does AI_PROXY_BASE in js/app.js point at it?");
+    }
     if(!res.ok){
-      const detail = await res.text().catch(()=> '');
-      throw new Error('AI search proxy ' + action + ' failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+      // The worker sends a plain-English {error} for expected conditions
+      // (rate limited, origin rejected, etc) — surface that directly rather
+      // than a generic "is it deployed?" message when we have it.
+      let message = 'AI search proxy ' + action + ' failed (' + res.status + ')';
+      try{
+        const data = await res.json();
+        if(data && data.error) message = data.error;
+      }catch(e){ /* non-JSON error body — keep the generic message */ }
+      throw new Error(message);
     }
     return res.json();
   }
@@ -1450,7 +1464,7 @@
     }catch(e){
       if(token !== poiSearchToken) return;
       console.error('[muni-walker] POI search failed:', e);
-      renderPoiStatus('Search failed: ' + (e.message || e) + '. Is the AI search Worker deployed and reachable?', true);
+      renderPoiStatus((e && e.message) || 'Search failed.', true);
     }finally{
       if(token === poiSearchToken) btn.disabled = false;
     }
