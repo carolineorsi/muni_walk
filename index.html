@@ -41,81 +41,118 @@
     </svg>
   </button>
 
-  <div id="info-card">
-    <div class="info-row">
-      <div class="info-title" id="info-title">—</div>
-      <span id="info-summary"></span>
-      <button id="collapse-btn" title="Collapse panel" aria-label="Collapse panel">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M6 9l6 6 6-6"></path>
-        </svg>
-      </button>
-    </div>
+  <button id="search-fab-btn" class="fab-btn" title="Search along the route" aria-label="Search along the route">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="11" cy="11" r="7"></circle>
+      <path d="M21 21l-4.3-4.3"></path>
+    </svg>
+  </button>
 
-    <div id="info-card-body">
-    <div id="direction-toggle"></div>
+  <button id="live-fab-btn" class="fab-btn" title="Live buses" aria-label="Live buses">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="5" width="18" height="12" rx="2"></rect>
+      <path d="M3 11h18"></path>
+      <circle cx="7.5" cy="19" r="1.5"></circle>
+      <circle cx="16.5" cy="19" r="1.5"></circle>
+    </svg>
+  </button>
 
-    <div id="poi-search-block">
-      <span class="stat-label">Find along the route</span>
-      <form id="poi-search-form" autocomplete="off">
-        <input id="poi-search-input" type="text" placeholder="restaurants, parks, historical sites…" maxlength="80">
-        <button id="poi-search-btn" type="submit" title="Search" aria-label="Search">
+  <div id="panel-stack">
+    <div id="info-card" class="floating-panel">
+      <div class="info-row">
+        <div class="info-title" id="info-title">—</div>
+        <span id="info-summary"></span>
+        <button id="collapse-btn" title="Collapse panel" aria-label="Collapse panel">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="11" cy="11" r="7"></circle>
-            <path d="M21 21l-4.3-4.3"></path>
+            <path d="M6 9l6 6 6-6"></path>
           </svg>
         </button>
-      </form>
-      <div id="poi-search-status"></div>
-      <div id="poi-search-result-row">
-        <span id="poi-search-result-count"></span>
-        <button id="poi-clear-btn" type="button">Clear</button>
-      </div>
-    </div>
-
-    <div id="live-block">
-      <div class="live-heading">
-        <span class="stat-label">Live buses</span>
-        <div id="live-toggle" title="Toggle live buses"><div class="knob"></div></div>
       </div>
 
-      <div id="live-status"></div>
+      <div id="info-card-body">
+      <div id="direction-toggle"></div>
 
-      <div id="live-arrival">
-        <span class="stat-label" id="live-arrival-label">Next arrival</span>
-        <div class="live-arrival-main">
-          <span id="live-arrival-mins">—</span>
-          <span id="live-arrival-unit">min</span>
+      <div id="progress-block">
+        <div class="progress-heading">
+          <span class="stat-label">Progress along route</span>
+          <span id="progress-pct">—</span>
         </div>
-        <div id="live-arrival-stop">—</div>
+        <div class="progress-figures">
+          <span id="progress-miles">—</span><span id="progress-miles-unit">mi walked of route</span>
+        </div>
+        <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
+        <div id="progress-sub">— mi total · — mi remaining</div>
       </div>
 
-      <div id="live-list"></div>
+      <div id="distance-block">
+        <div>
+          <span class="stat-label">Distance to route</span>
+          <div id="distance-value">—</div>
+          <div id="distance-sub">turn on GPS to measure</div>
+        </div>
+        <div style="text-align:right">
+          <span class="stat-label">Nearest point</span>
+          <div class="stat" id="nearest-coord">—</div>
+        </div>
+      </div>
+      </div>
     </div>
 
-    <div id="progress-block">
-      <div class="progress-heading">
-        <span class="stat-label">Progress along route</span>
-        <span id="progress-pct">—</span>
+    <div id="search-card" class="floating-panel">
+      <div class="info-row">
+        <div class="info-title">Find along the route</div>
+        <button id="search-close-btn" class="panel-close-btn" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
       </div>
-      <div class="progress-figures">
-        <span id="progress-miles">—</span><span id="progress-miles-unit">mi walked of route</span>
+      <div class="panel-body">
+        <form id="poi-search-form" autocomplete="off">
+          <input id="poi-search-input" type="text" placeholder="restaurants, parks, historical sites…" maxlength="80">
+          <button id="poi-search-btn" type="submit" title="Search" aria-label="Search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="11" cy="11" r="7"></circle>
+              <path d="M21 21l-4.3-4.3"></path>
+            </svg>
+          </button>
+        </form>
+        <div id="poi-search-status"></div>
+        <div id="poi-search-result-row">
+          <span id="poi-search-result-count"></span>
+          <button id="poi-clear-btn" type="button">Clear</button>
+        </div>
       </div>
-      <div class="progress-track"><div class="progress-fill" id="progress-fill"></div></div>
-      <div id="progress-sub">— mi total · — mi remaining</div>
     </div>
 
-    <div id="distance-block">
-      <div>
-        <span class="stat-label">Distance to route</span>
-        <div id="distance-value">—</div>
-        <div id="distance-sub">turn on GPS to measure</div>
+    <div id="live-card" class="floating-panel">
+      <div class="info-row">
+        <div class="info-title">Live buses</div>
+        <button id="live-close-btn" class="panel-close-btn" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
       </div>
-      <div style="text-align:right">
-        <span class="stat-label">Nearest point</span>
-        <div class="stat" id="nearest-coord">—</div>
+      <div class="panel-body">
+        <div class="live-heading">
+          <span class="stat-label">Show live buses</span>
+          <div id="live-toggle" title="Toggle live buses"><div class="knob"></div></div>
+        </div>
+
+        <div id="live-status"></div>
+
+        <div id="live-arrival">
+          <span class="stat-label" id="live-arrival-label">Next arrival</span>
+          <div class="live-arrival-main">
+            <span id="live-arrival-mins">—</span>
+            <span id="live-arrival-unit">min</span>
+          </div>
+          <div id="live-arrival-stop">—</div>
+        </div>
+
+        <div id="live-list"></div>
       </div>
-    </div>
     </div>
   </div>
 </div>

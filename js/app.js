@@ -281,6 +281,10 @@
     progressModel = null;
     currentRouteName = routeName || null;
     document.getElementById('info-card').classList.remove('visible');
+    document.getElementById('search-fab-btn').classList.remove('visible');
+    document.getElementById('live-fab-btn').classList.remove('visible');
+    closeSidePanel(document.getElementById('search-card'), document.getElementById('search-fab-btn'));
+    closeSidePanel(document.getElementById('live-card'), document.getElementById('live-fab-btn'));
     document.getElementById('empty-hint').classList.add('hidden');
     document.getElementById('progress-block').classList.remove('visible');
     document.getElementById('direction-toggle').innerHTML = '';
@@ -366,6 +370,8 @@
 
     document.getElementById('info-title').textContent = routeDisplayLabel(routeName);
     document.getElementById('info-card').classList.add('visible');
+    document.getElementById('search-fab-btn').classList.add('visible');
+    document.getElementById('live-fab-btn').classList.add('visible');
 
     rebuildArrowMarkers();
     setupDirectionToggle();
@@ -1509,11 +1515,51 @@
     updateInfoSummary();
   });
 
+  // ---------- Search & live-bus side panels ----------
+  // Opening either one collapses the route-details panel so the map stays uncluttered;
+  // the two side panels are mutually exclusive since there's only room for one at a time.
+  const searchCard = document.getElementById('search-card');
+  const liveCard = document.getElementById('live-card');
+  const searchFabBtn = document.getElementById('search-fab-btn');
+  const liveFabBtn = document.getElementById('live-fab-btn');
+
+  function closeSidePanel(panel, fabBtn){
+    panel.classList.remove('visible');
+    fabBtn.classList.remove('active');
+  }
+  function openSidePanel(panel, fabBtn, otherPanel, otherFabBtn){
+    closeSidePanel(otherPanel, otherFabBtn);
+    panel.classList.add('visible');
+    fabBtn.classList.add('active');
+    infoCard.classList.add('collapsed');
+    updateInfoSummary();
+  }
+
+  searchFabBtn.addEventListener('click', ()=>{
+    if(searchCard.classList.contains('visible')){
+      closeSidePanel(searchCard, searchFabBtn);
+    }else{
+      openSidePanel(searchCard, searchFabBtn, liveCard, liveFabBtn);
+      document.getElementById('poi-search-input').focus();
+    }
+  });
+  liveFabBtn.addEventListener('click', ()=>{
+    if(liveCard.classList.contains('visible')){
+      closeSidePanel(liveCard, liveFabBtn);
+    }else{
+      openSidePanel(liveCard, liveFabBtn, searchCard, searchFabBtn);
+    }
+  });
+  document.getElementById('search-close-btn').addEventListener('click', ()=> closeSidePanel(searchCard, searchFabBtn));
+  document.getElementById('live-close-btn').addEventListener('click', ()=> closeSidePanel(liveCard, liveFabBtn));
+
   function positionHeadsignOffsets(){
     const hs = document.getElementById('headsign');
     const h = hs.getBoundingClientRect().height;
     document.getElementById('basemap-select').style.top = (h + 14) + 'px';
     locateBtn.style.top = (h + 14 + 38 + 10) + 'px';
+    searchFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10) + 'px';
+    liveFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10 + 48 + 10) + 'px';
     document.getElementById('error-toast').style.top = (h + 14) + 'px';
     document.getElementById('empty-hint').style.top = (h + 14) + 'px';
   }
