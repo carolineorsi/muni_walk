@@ -73,9 +73,15 @@
   .dot.live{background:var(--good);box-shadow:0 0 6px var(--good);animation:pulse 1.6s infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
 
-  /* ---------- Bottom info card ---------- */
-  #info-card{
+  /* ---------- Bottom panel stack (route details / search / live buses) ---------- */
+  #panel-stack{
     position:absolute;left:14px;right:14px;bottom:14px;z-index:1000;
+    display:flex;flex-direction:column-reverse;gap:10px;
+    pointer-events:none;
+  }
+  #panel-stack > .floating-panel{pointer-events:auto;}
+
+  .floating-panel{
     background:var(--panel);
     border:1px solid var(--line-hair);
     border-radius:12px;
@@ -83,7 +89,19 @@
     box-shadow:0 10px 30px rgba(0,0,0,.45);
     display:none;
   }
-  #info-card.visible{display:block;}
+  .floating-panel.visible{display:block;}
+
+  .panel-body{margin-top:10px;}
+
+  .panel-close-btn{
+    flex:0 0 auto;width:28px;height:28px;border-radius:50%;
+    background:var(--panel-2);border:1px solid var(--line-hair);color:var(--paper);
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    padding:0;transition:background .15s;
+  }
+  .panel-close-btn:active{background:var(--line-hair);}
+  .panel-close-btn svg{width:14px;height:14px;}
+
   .info-row{display:flex;align-items:center;justify-content:space-between;gap:10px;}
   .info-title{
     font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:20px;letter-spacing:.3px;
@@ -144,8 +162,7 @@
   #progress-sub{font-size:11px;color:var(--muted);margin-top:6px;}
 
   /* ---------- Find along the route (AI POI search) ---------- */
-  #poi-search-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);}
-  #poi-search-form{display:flex;gap:8px;margin-top:6px;}
+  #poi-search-form{display:flex;gap:8px;}
   #poi-search-input{
     flex:1 1 auto;min-width:0;
     background:#161a1f;color:var(--paper);
@@ -204,7 +221,6 @@
   .poi-popup-desc{font-size:12.5px;margin-top:8px;line-height:1.45;}
 
   /* ---------- Live buses ---------- */
-  #live-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);}
   .live-heading{display:flex;justify-content:space-between;align-items:center;}
   .live-heading .stat-label{margin:0;}
   #live-toggle{
@@ -289,6 +305,21 @@
   #locate-btn:active{transform:scale(.94);}
   #locate-btn.following{background:var(--amber);border-color:var(--amber);color:#1a1204;}
   #locate-btn svg{width:22px;height:22px;}
+
+  .fab-btn{
+    position:absolute;right:14px;z-index:1000;
+    width:48px;height:48px;border-radius:50%;
+    background:var(--panel);border:1px solid var(--line-hair);
+    display:none;align-items:center;justify-content:center;
+    box-shadow:0 8px 20px rgba(0,0,0,.4);
+    cursor:pointer;
+    color:var(--paper);
+    transition:background .15s, border-color .15s, transform .1s;
+  }
+  .fab-btn.visible{display:flex;}
+  .fab-btn:active{transform:scale(.94);}
+  .fab-btn.active{background:var(--amber);border-color:var(--amber);color:#1a1204;}
+  .fab-btn svg{width:20px;height:20px;}
 
   #basemap-select{
     position:absolute;right:14px;z-index:1000;
