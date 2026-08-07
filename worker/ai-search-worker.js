@@ -163,9 +163,12 @@ const DESCRIBE_TOOL = {
             description: {
               type: "string",
               description:
-                "2-3 sentences (<=400 chars) covering what the place is known for — history, specialty, atmosphere. " +
-                "Ground it in the given tags and, when you looked it up, what you actually found. If you found nothing " +
-                "specific, write a brief, honest sentence based on its category instead of guessing. Never invent " +
+                "2-3 sentences (<=400 chars) capturing the CHARACTER of the place, not its logistics. For a restaurant/cafe/bar, " +
+                "say what kind of food or drink it serves and its vibe, not payment methods or opening hours. For a historical " +
+                "or cultural site, give a bit of its history or what it's known for, not accessibility or admission details. " +
+                "Do not mention hours, payment methods, accessibility, phone numbers, or website — omit that even if you found " +
+                "it. Ground the description in the given tags and, when you looked it up, what you actually found. If you found " +
+                "nothing specific, write a brief, honest sentence based on its category instead of guessing. Never invent " +
                 "ratings, hours, prices, or awards.",
             },
           },
@@ -262,10 +265,13 @@ async function handleDescribe(env, body, corsHeaders) {
     "You are a knowledgeable local guide writing entries for a walking-tour app in San Francisco. For each place given " +
     "(name + OpenStreetMap tags), decide whether you already know enough to write something specific and interesting. " +
     "If not — and it's a named, identifiable place rather than a generic chain or category — use the web_search tool to " +
-    "look it up (include the neighborhood or \"San Francisco\" in the query for accuracy). Don't bother searching for " +
-    "well-known chains or when the tags alone are enough. Once you've looked into whatever you need to, call " +
-    "emit_descriptions exactly once with one entry for every place given. Ground each description in what you found or " +
-    "in well-established facts — never invent ratings, hours, prices, or history.";
+    "look it up (include the neighborhood or \"San Francisco\" in the query for accuracy), focusing your search on what " +
+    "the place is actually like rather than its logistics. Don't bother searching for well-known chains or when the tags " +
+    "alone are enough. Write about the CHARACTER of each place, not its logistics: for restaurants/cafes/bars, the kind " +
+    "of food or drink and the vibe; for historical or cultural sites, a bit of the history or what it's known for. Leave " +
+    "out hours, payment methods, accessibility, phone numbers, and websites even if you find them. Once you've looked " +
+    "into whatever you need to, call emit_descriptions exactly once with one entry for every place given. Ground each " +
+    "description in what you found or in well-established facts — never invent ratings, hours, prices, or awards.";
   const userText =
     `The user searched for: "${query}"\n\n` +
     `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
