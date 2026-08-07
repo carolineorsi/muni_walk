@@ -1211,13 +1211,15 @@
   // Pipeline: free text -> AI proxy turns it into OpenStreetMap tag filters
   // -> Overpass API (real, keyless OSM data) returns candidate places in a
   // box around the route -> filtered down to those actually within 1/4
-  // mile of the drawn route line -> AI proxy writes a one-line description
-  // for the results shown. The AI never invents a location: coordinates
-  // and addresses always come straight from OpenStreetMap.
+  // mile of the drawn route line -> ranked (visitor rating first when OSM
+  // has one, then closeness to the route as the "best match" tiebreaker)
+  // and capped to the top 20 -> AI proxy writes a richer description for
+  // each, looking places up when useful. The AI never invents a location:
+  // coordinates and addresses always come straight from OpenStreetMap.
   // =====================================================================
   const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
-  const POI_MAX_RESULTS = 40;                // cap on markers plotted
-  const POI_DESCRIBE_CAP = 30;               // matches the worker's own cap
+  const POI_MAX_RESULTS = 20;                // cap on markers plotted / described
+  const POI_DESCRIBE_CAP = 20;               // matches the worker's own cap
 
   let poiSearchToken = 0; // bumped to invalidate stale in-flight searches
 
@@ -1339,6 +1341,28 @@
     return line + ', ' + city;
   }
 
+  // OSM occasionally carries a visitor-facing rating (mostly `stars` on
+  // lodging, sometimes a plain `rating`) — pull it out if present.
+  function extractRating(tags){
+    if(!tags) return null;
+    const raw = tags.stars != null ? tags.stars : tags.rating;
+    const n = parseFloat(raw);
+    return isNaN(n) ? null : n;
+  }
+
+  // Ranks candidates for the top-20 cutoff: places with a visitor rating
+  // sort to the front (highest first), everything else follows in
+  // best-match order (closest to the route first).
+  function rankCandidates(list){
+    return list.slice().sort((a,b)=>{
+      const ra = extractRating(a.tags), rb = extractRating(b.tags);
+      if(ra != null && rb != null) return rb - ra || (a.distMeters - b.distMeters);
+      if(ra != null) return -1;
+      if(rb != null) return 1;
+      return a.distMeters - b.distMeters;
+    });
+  }
+
   function categoryFallbackDescription(tags){
     const cat = tags.amenity || tags.shop || tags.tourism || tags.historic || tags.leisure;
     return cat ? ('A ' + String(cat).replace(/_/g,' ') + '.') : 'A point of interest along the route.';
@@ -1423,16 +1447,14 @@
       });
 
       candidates.forEach(c => { c.distMeters = distanceToRouteMeters([c.lat, c.lon]); });
-      const inRange = candidates
-        .filter(c => c.distMeters <= POI_RADIUS_METERS)
-        .sort((a,b) => a.distMeters - b.distMeters);
+      const inRange = candidates.filter(c => c.distMeters <= POI_RADIUS_METERS);
 
       if(!inRange.length){
         renderPoiStatus('No ' + (plan.label || query) + ' found within 1/4 mile of this route.', false);
         return;
       }
 
-      const shown = inRange.slice(0, POI_MAX_RESULTS);
+      const shown = rankCandidates(inRange).slice(0, POI_MAX_RESULTS);
 
       renderPoiStatus('Writing descriptions…');
       const descById = {};
@@ -1461,7 +1483,7 @@
           '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
           '<div class="poi-popup-desc">' + escapeHtml(desc) + '</div>';
         L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
-          .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 240 })
+          .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 280 })
           .addTo(poiLayerGroup);
       });
 

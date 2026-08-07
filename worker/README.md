@@ -6,12 +6,18 @@ things:
 
 1. **`interpret`** — turns a free-text request ("tacos", "historical
    sites") into OpenStreetMap tag filters.
-2. **`describe`** — given a batch of already-found places (name + OSM tags),
-   writes a short, grounded one-sentence description for each.
+2. **`describe`** — given a batch of already-found places (name + OSM tags,
+   capped at 20), writes a richer 2-3 sentence description for each. When
+   the model isn't already confident about a place, it can use Anthropic's
+   `web_search` tool to look up real facts about it (history, specialty,
+   what it's known for) before writing the description.
 
 It never returns coordinates on its own — those always come straight from
-OpenStreetMap's Overpass API, queried directly by the browser. See
-`js/app.js` for the client-side pipeline that ties these together.
+OpenStreetMap's Overpass API, queried directly by the browser, and the
+client picks which (up to 20) places to describe before this Worker ever
+sees them — a search never adds a new place to the results, only detail to
+ones already found. See `js/app.js` for the client-side pipeline that ties
+these together.
 
 ## Cost controls
 
@@ -34,6 +40,15 @@ against that:
 Both limits are enforced with a Workers KV counter, which is best-effort
 (not perfectly atomic under heavy concurrency) — fine for deterring abuse,
 not a precise billing meter.
+
+`describe` calls now also cost web searches (billed separately by
+Anthropic, on top of normal token costs) whenever the model looks a place
+up. `MAX_WEB_SEARCHES_PER_DESCRIBE` in `ai-search-worker.js` caps this at
+10 searches per `describe` call — the model skips searching for places it
+already knows or that don't need it, so most calls use fewer. Factor that
+into your Anthropic Console spend limit (see below) alongside the request
+caps above. Using `web_search` also requires that tool be enabled for your
+Anthropic API key/org.
 
 **The real backstop** doesn't live in this Worker at all: set a spend limit
 on your [Anthropic Console](https://console.anthropic.com) under Settings →
@@ -80,5 +95,6 @@ POST /
 { "action": "describe", "query": "tacos",
   "points": [{"id":"node/123","name":"La Taqueria","tags":{"amenity":"restaurant","cuisine":"mexican"}}] }
 ->
-{ "descriptions": [{"id":"node/123","description":"A neighborhood Mexican restaurant known for tacos."}] }
+{ "descriptions": [{"id":"node/123","description":"A Mission District institution since 1973, La Taqueria is famous for
+  its no-rice burritos wrapped in foil and grilled — often cited as some of the best in the city."}] }
 ```

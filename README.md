@@ -19,8 +19,11 @@ GPS position against it, and shows live buses running that route.
   your nearest stop.
 - **Find along the route** — type a free-text request ("restaurants",
   "historical sites", "cozy coffee shops") and get points of interest
-  plotted on the map, filtered to within 1/4 mile of the route. Tap a pin
-  for its name, address, and a short AI-written description.
+  plotted on the map, filtered to within 1/4 mile of the route and ranked
+  by visitor rating (when OpenStreetMap has one) and closeness to the
+  route, capped at the top 20. Tap a pin for its name, address, and a
+  richer AI-written description — the AI looks the place up when it's
+  useful so the description covers more than just its OSM category.
 - **Basemap switcher** — choose between dark, light, streets, and satellite
   map styles.
 
@@ -36,13 +39,16 @@ The app is a static site — no build step, no backend of its own.
   Cloudflare Worker that keeps the API key server-side.
 - "Find along the route" combines two data sources: a Cloudflare Worker
   (`worker/`) that holds an Anthropic API key server-side and turns your
-  free-text request into OpenStreetMap tag filters (and later writes short
-  descriptions of the results), and [OpenStreetMap's Overpass
+  free-text request into OpenStreetMap tag filters (and later writes
+  richer descriptions of the results, looking a place up on the web when
+  it helps), and [OpenStreetMap's Overpass
   API](https://overpass-api.de/), queried directly by the browser, for the
   actual place data — names, coordinates, and addresses. The AI never
   invents a location; it only interprets intent and describes real places
   it's given. Results are filtered client-side to those within 1/4 mile of
-  the drawn route line. See `worker/README.md` to deploy it.
+  the drawn route line, then ranked by visitor rating (if OSM has one) and
+  closeness to the route, capped to the top 20. See `worker/README.md` to
+  deploy it.
 
 ## Project structure
 

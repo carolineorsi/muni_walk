@@ -4,12 +4,15 @@
 // that needs a secret API key, so it lives server-side, same pattern as the
 // muni-511-proxy Worker that already fronts 511.org for this app.
 //
-// It never looks up real places itself — it only turns natural-language
-// input into structured search parameters (and, separately, writes short
-// descriptions from tag data the client already fetched from OpenStreetMap).
+// It never discovers places itself — it only turns natural-language input
+// into structured search parameters, and separately writes richer
+// descriptions for places the client already found via OpenStreetMap.
 // Actual coordinates/addresses always come from OpenStreetMap's Overpass
-// API, called directly by the browser — this worker is not in that path,
-// so it can't hallucinate a location.
+// API, called directly by the browser — this worker is not in that path, so
+// it can't hallucinate a location. For the description step it may use
+// Anthropic's web_search tool to look up facts *about* a given place (its
+// history, specialty, etc) — that only enriches the text, it never adds or
+// changes which places get shown.
 //
 // Endpoints (both POST, JSON body):
 //
@@ -21,7 +24,9 @@
 //
 //   { action: "describe", query: "tacos", points: [{id, name, tags}, ...] }
 //     -> { descriptions: [{id, description}, ...] }
-//     `points` should be capped client-side (<=30) — each one costs tokens.
+//     `points` should be capped client-side (<=20) — each one costs tokens,
+//     and a place the model isn't already confident about may cost an
+//     extra web search (see MAX_WEB_SEARCHES_PER_DESCRIBE below).
 //
 // Cost controls: only the app's own origin may call this (checked against
 // the ALLOWED_ORIGINS var below), and every request is rate-limited both
@@ -43,7 +48,11 @@
 
 const ANTHROPIC_VERSION = "2023-06-01";
 const MODEL = "claude-haiku-4-5-20251001";
-const MAX_POINTS_PER_DESCRIBE = 30;
+const MAX_POINTS_PER_DESCRIBE = 20;
+// Not every point needs a lookup (chains and generic categories the model
+// already knows), so this is a ceiling, not a per-point guarantee — keeps a
+// worst-case describe call from firing 20 searches at once.
+const MAX_WEB_SEARCHES_PER_DESCRIBE = 10;
 const DEFAULT_MAX_REQUESTS_PER_MINUTE_PER_IP = 12;
 const DEFAULT_MAX_DAILY_REQUESTS = 400;
 
@@ -141,7 +150,7 @@ const INTERPRET_TOOL = {
 
 const DESCRIBE_TOOL = {
   name: "emit_descriptions",
-  description: "Write a one-sentence description for each point of interest, grounded only in the tag data provided.",
+  description: "Write a richer description for each point of interest, one entry per id given.",
   input_schema: {
     type: "object",
     properties: {
@@ -151,7 +160,14 @@ const DESCRIBE_TOOL = {
           type: "object",
           properties: {
             id: { type: "string" },
-            description: { type: "string", description: "One brief, plain sentence (<=140 chars). Base it only on the given name/tags — never invent facts, ratings, or hours." },
+            description: {
+              type: "string",
+              description:
+                "2-3 sentences (<=400 chars) covering what the place is known for — history, specialty, atmosphere. " +
+                "Ground it in the given tags and, when you looked it up, what you actually found. If you found nothing " +
+                "specific, write a brief, honest sentence based on its category instead of guessing. Never invent " +
+                "ratings, hours, prices, or awards.",
+            },
           },
           required: ["id", "description"],
           additionalProperties: false,
@@ -163,7 +179,18 @@ const DESCRIBE_TOOL = {
   },
 };
 
-async function callClaude(env, { system, userText, tool }) {
+// Server-side tool: Anthropic runs the actual search and feeds results back
+// into the same request, so this worker never touches a search API or its
+// credentials — it just has to allow the tool and, if needed, re-prompt the
+// model to finalize afterward (see handleDescribe).
+const WEB_SEARCH_TOOL = {
+  type: "web_search_20250305",
+  name: "web_search",
+  max_uses: MAX_WEB_SEARCHES_PER_DESCRIBE,
+  user_location: { type: "approximate", city: "San Francisco", region: "California", country: "US" },
+};
+
+async function callAnthropic(env, { system, messages, tools, toolChoice, maxTokens }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -173,11 +200,11 @@ async function callClaude(env, { system, userText, tool }) {
     },
     body: JSON.stringify({
       model: MODEL,
-      max_tokens: 1024,
+      max_tokens: maxTokens || 1024,
       system,
-      messages: [{ role: "user", content: userText }],
-      tools: [tool],
-      tool_choice: { type: "tool", name: tool.name },
+      messages,
+      tools,
+      tool_choice: toolChoice,
     }),
   });
 
@@ -186,8 +213,21 @@ async function callClaude(env, { system, userText, tool }) {
     throw new Error(`Anthropic API error ${res.status}: ${detail.slice(0, 300)}`);
   }
 
-  const data = await res.json();
-  const toolUse = (data.content || []).find((b) => b.type === "tool_use" && b.name === tool.name);
+  return res.json();
+}
+
+function findToolUse(data, name) {
+  return (data.content || []).find((b) => b.type === "tool_use" && b.name === name);
+}
+
+async function callClaude(env, { system, userText, tool }) {
+  const data = await callAnthropic(env, {
+    system,
+    messages: [{ role: "user", content: userText }],
+    tools: [tool],
+    toolChoice: { type: "tool", name: tool.name },
+  });
+  const toolUse = findToolUse(data, tool.name);
   if (!toolUse) throw new Error("Model did not return the expected tool call");
   return toolUse.input;
 }
@@ -218,19 +258,52 @@ async function handleDescribe(env, body, corsHeaders) {
     tags: p.tags || {},
   }));
 
-  const result = await callClaude(env, {
-    system:
-      "You write short, factual one-sentence descriptions of places for a walking-tour app, based ONLY on the OpenStreetMap " +
-      "name/tags given to you. Never invent details (no made-up hours, ratings, prices, or history) beyond what the tags imply. " +
-      "If tags are sparse, write a plain sentence describing the category, e.g. 'A neighborhood cafe.'",
-    userText:
-      `The user searched for: "${query}"\n\n` +
-      `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
-      `Write one description per id.`,
-    tool: DESCRIBE_TOOL,
-  });
+  const system =
+    "You are a knowledgeable local guide writing entries for a walking-tour app in San Francisco. For each place given " +
+    "(name + OpenStreetMap tags), decide whether you already know enough to write something specific and interesting. " +
+    "If not — and it's a named, identifiable place rather than a generic chain or category — use the web_search tool to " +
+    "look it up (include the neighborhood or \"San Francisco\" in the query for accuracy). Don't bother searching for " +
+    "well-known chains or when the tags alone are enough. Once you've looked into whatever you need to, call " +
+    "emit_descriptions exactly once with one entry for every place given. Ground each description in what you found or " +
+    "in well-established facts — never invent ratings, hours, prices, or history.";
+  const userText =
+    `The user searched for: "${query}"\n\n` +
+    `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
+    `Look up whichever places need it, then call emit_descriptions with one entry per id.`;
 
-  return jsonResponse(result, 200, corsHeaders);
+  const tools = [WEB_SEARCH_TOOL, DESCRIBE_TOOL];
+  let messages = [{ role: "user", content: userText }];
+
+  let data = await callAnthropic(env, {
+    system,
+    messages,
+    tools,
+    toolChoice: { type: "auto" },
+    maxTokens: 8192,
+  });
+  let toolUse = findToolUse(data, DESCRIBE_TOOL.name);
+
+  // The model may stop after searching without finalizing — give it one
+  // more turn, forced this time, with its own search results still in
+  // context so it doesn't need to redo them.
+  if (!toolUse && data.stop_reason !== "max_tokens") {
+    messages = [
+      ...messages,
+      { role: "assistant", content: data.content },
+      { role: "user", content: "Now call emit_descriptions with your final description for every place." },
+    ];
+    data = await callAnthropic(env, {
+      system,
+      messages,
+      tools,
+      toolChoice: { type: "tool", name: DESCRIBE_TOOL.name },
+      maxTokens: 4096,
+    });
+    toolUse = findToolUse(data, DESCRIBE_TOOL.name);
+  }
+
+  if (!toolUse) throw new Error("Model did not return the expected tool call");
+  return jsonResponse(toolUse.input, 200, corsHeaders);
 }
 
 export default {
