@@ -47,7 +47,11 @@
 //   6. Copy the deployed *.workers.dev URL into AI_PROXY_BASE in js/app.js
 
 const ANTHROPIC_VERSION = "2023-06-01";
-const MODEL = "claude-haiku-4-5-20251001";
+// interpret is a small, mechanical classification task — Haiku is plenty.
+// describe is the one where writing quality actually shows, so it gets the
+// stronger (pricier) model.
+const INTERPRET_MODEL = "claude-haiku-4-5-20251001";
+const DESCRIBE_MODEL = "claude-sonnet-5";
 const MAX_POINTS_PER_DESCRIBE = 20;
 // Not every point needs a lookup (chains and generic categories the model
 // already knows), so this is a ceiling, not a per-point guarantee — keeps a
@@ -193,7 +197,7 @@ const WEB_SEARCH_TOOL = {
   user_location: { type: "approximate", city: "San Francisco", region: "California", country: "US" },
 };
 
-async function callAnthropic(env, { system, messages, tools, toolChoice, maxTokens }) {
+async function callAnthropic(env, { model, system, messages, tools, toolChoice, maxTokens }) {
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -202,7 +206,7 @@ async function callAnthropic(env, { system, messages, tools, toolChoice, maxToke
       "anthropic-version": ANTHROPIC_VERSION,
     },
     body: JSON.stringify({
-      model: MODEL,
+      model,
       max_tokens: maxTokens || 1024,
       system,
       messages,
@@ -223,8 +227,9 @@ function findToolUse(data, name) {
   return (data.content || []).find((b) => b.type === "tool_use" && b.name === name);
 }
 
-async function callClaude(env, { system, userText, tool }) {
+async function callClaude(env, { model, system, userText, tool }) {
   const data = await callAnthropic(env, {
+    model,
     system,
     messages: [{ role: "user", content: userText }],
     tools: [tool],
@@ -240,6 +245,7 @@ async function handleInterpret(env, body, corsHeaders) {
   if (!query) return jsonResponse({ error: "Missing 'query'" }, 400, corsHeaders);
 
   const result = await callClaude(env, {
+    model: INTERPRET_MODEL,
     system:
       "You turn a short free-text request (things a pedestrian wants to find along a walking route) into OpenStreetMap tag filters. " +
       "Only use tag keys/values that are real, commonly-used OpenStreetMap tagging. Prefer broad, well-populated tags over obscure ones.",
@@ -281,6 +287,7 @@ async function handleDescribe(env, body, corsHeaders) {
   let messages = [{ role: "user", content: userText }];
 
   let data = await callAnthropic(env, {
+    model: DESCRIBE_MODEL,
     system,
     messages,
     tools,
@@ -299,6 +306,7 @@ async function handleDescribe(env, body, corsHeaders) {
       { role: "user", content: "Now call emit_descriptions with your final description for every place." },
     ];
     data = await callAnthropic(env, {
+      model: DESCRIBE_MODEL,
       system,
       messages,
       tools,
