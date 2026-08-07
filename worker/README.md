@@ -5,12 +5,15 @@ Anthropic API key server-side (never in browser JS) and does exactly two
 things:
 
 1. **`interpret`** — turns a free-text request ("tacos", "historical
-   sites") into OpenStreetMap tag filters.
+   sites") into OpenStreetMap tag filters. Uses Haiku (`INTERPRET_MODEL` in
+   `ai-search-worker.js`) — it's a small, mechanical classification task.
 2. **`describe`** — given a batch of already-found places (name + OSM tags,
    capped at 20), writes a richer 2-3 sentence description for each. When
    the model isn't already confident about a place, it can use Anthropic's
    `web_search` tool to look up real facts about it (history, specialty,
-   what it's known for) before writing the description.
+   what it's known for) before writing the description. Uses Sonnet
+   (`DESCRIBE_MODEL`) — writing quality actually matters here, and it's the
+   one call already bounded by `MAX_POINTS_PER_DESCRIBE`.
 
 It never returns coordinates on its own — those always come straight from
 OpenStreetMap's Overpass API, queried directly by the browser, and the
@@ -49,6 +52,10 @@ already knows or that don't need it, so most calls use fewer. Factor that
 into your Anthropic Console spend limit (see below) alongside the request
 caps above. Using `web_search` also requires that tool be enabled for your
 Anthropic API key/org.
+
+`describe` also runs on Sonnet rather than Haiku, which costs more per
+token than `interpret`'s model — worth knowing when setting your spend
+limit, though the request caps above still bound the worst case.
 
 **The real backstop** doesn't live in this Worker at all: set a spend limit
 on your [Anthropic Console](https://console.anthropic.com) under Settings →
