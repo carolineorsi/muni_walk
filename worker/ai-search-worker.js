@@ -47,11 +47,12 @@
 //   6. Copy the deployed *.workers.dev URL into AI_PROXY_BASE in js/app.js
 
 const ANTHROPIC_VERSION = "2023-06-01";
-// interpret is a small, mechanical classification task — Haiku is plenty.
-// describe is the one where writing quality actually shows, so it gets the
-// stronger (pricier) model.
+// Both calls run on Haiku — it's the cheap/fast tier, and it turned out the
+// missing ingredient for describe's quality was web_search actually running
+// (see WEB_SEARCH_TOOL below), not a stronger model. Keeping this as its own
+// constant (rather than merging into one MODEL) in case that changes again.
 const INTERPRET_MODEL = "claude-haiku-4-5-20251001";
-const DESCRIBE_MODEL = "claude-sonnet-5";
+const DESCRIBE_MODEL = "claude-haiku-4-5-20251001";
 const MAX_POINTS_PER_DESCRIBE = 20;
 // Not every point needs a lookup (chains and generic categories the model
 // already knows), so this is a ceiling, not a per-point guarantee — keeps a
