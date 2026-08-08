@@ -1243,8 +1243,11 @@
   // Places (fetchNrhpListingsInBBox) — since OSM's historic tagging alone
   // skews toward monuments/plaques. Candidates are then filtered down to
   // those actually within 1/4 mile of the drawn route line -> ranked
-  // (visitor rating first when OSM has one, then closeness to the route
-  // as the "best match" tiebreaker) and capped to the top 20 -> AI proxy
+  // (visitor rating first when OSM has one, then closeness as the "best
+  // match" tiebreaker — distance from the user's current location when
+  // they're along the route, otherwise distance from the route line
+  // itself) -> the top 20 are plotted, with a "Show more" button to
+  // reveal the next 20 from the ranked list without re-querying -> AI proxy
   // writes a richer description for each OSM/SF-landmark/NRHP result,
   // looking places up when useful (Wikipedia-sourced results already
   // carry their own summary, so they skip this step). The AI never
@@ -1266,6 +1269,12 @@
   // someone clicks, `candidates` from runPoiSearch is long out of scope).
   let poiDescribeQuery = '';
   let poiCandidatesById = {};
+
+  // Full ranked result list for the current search (can be much longer than
+  // what's plotted) plus how many of it are currently shown as markers, so
+  // the "Show more" button can reveal the next batch without re-querying.
+  let poiRankedPool = [];
+  let poiShownCount = 0;
 
   function poiDescElementId(id){
     return 'poi-desc-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '-');
@@ -1685,14 +1694,88 @@
   function clearPoiResults(){
     poiLayerGroup.clearLayers();
     poiCandidatesById = {};
+    poiRankedPool = [];
+    poiShownCount = 0;
     renderPoiResultRow(0,0);
     renderPoiStatus('');
+    updatePoiShowMoreButton();
   }
 
   document.getElementById('poi-clear-btn').addEventListener('click', ()=>{
     clearPoiResults();
     poiSearchToken++; // invalidate any in-flight search
   });
+
+  function updatePoiShowMoreButton(){
+    const btn = document.getElementById('poi-show-more-btn');
+    const remaining = poiRankedPool.length - poiShownCount;
+    if(remaining > 0){
+      btn.textContent = 'Show ' + Math.min(POI_MAX_RESULTS, remaining) + ' more';
+      btn.classList.add('visible');
+    }else{
+      btn.classList.remove('visible');
+    }
+  }
+
+  document.getElementById('poi-show-more-btn').addEventListener('click', ()=>{
+    const next = poiRankedPool.slice(poiShownCount, poiShownCount + POI_MAX_RESULTS);
+    renderPoiMarkerBatch(next);
+    renderPoiResultRow(poiShownCount, poiRankedPool.length);
+    updatePoiShowMoreButton();
+  });
+
+  // Plots one batch of candidates as map markers, appending to whatever's
+  // already on the map (used both for the initial results and for each
+  // "Show more" batch) and advancing poiShownCount as it goes.
+  function renderPoiMarkerBatch(list){
+    list.forEach(c=>{
+      poiCandidatesById[c.id] = { name: c.name, tags: c.tags };
+      const icon = L.divIcon({
+        className: '',
+        html: '<div class="poi-marker"><div class="poi-marker-pin"><span>' + iconForTags(c.tags) + '</span></div></div>',
+        iconSize: [26,26], iconAnchor: [13,26]
+      });
+      // Wikipedia-sourced candidates already carry a written summary, so
+      // there's nothing to fetch on click — show it straight away and
+      // skip the "Tell me more" button entirely.
+      const address = c.wikiExtract ? 'From Wikipedia' : (formatAddress(c.tags) || 'Address unavailable');
+      const descHtml = c.wikiExtract
+        ? '<div class="poi-popup-desc">' + escapeHtml(c.wikiExtract) + '</div>'
+        : '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
+            '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
+          '</div>';
+      // SF's own landmark registry and the National Register both
+      // additionally supply a designation number/year and a link to the
+      // official record — real primary-source documentation neither OSM
+      // nor Wikipedia offer.
+      let landmarkHtml = '';
+      const designationBits = [];
+      if(c.landmarkNo) designationBits.push('SF Landmark No. ' + c.landmarkNo);
+      if(c.landmarkYear) designationBits.push('designated ' + c.landmarkYear);
+      if(c.nrhpRefNum) designationBits.push('NRHP Ref. No. ' + c.nrhpRefNum);
+      if(c.nrhpYear) designationBits.push('listed ' + c.nrhpYear);
+      if(designationBits.length){
+        landmarkHtml += '<div class="poi-popup-address">' + escapeHtml(designationBits.join(', ')) + '</div>';
+      }
+      if(c.landmarkDocUrl){
+        landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.landmarkDocUrl) +
+          '" target="_blank" rel="noopener noreferrer">Designation report ↗</a></div>';
+      }
+      if(c.nrhpDocUrl){
+        landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.nrhpDocUrl) +
+          '" target="_blank" rel="noopener noreferrer">NRHP nomination form ↗</a></div>';
+      }
+      const popupHtml =
+        '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
+        '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
+        landmarkHtml +
+        descHtml;
+      L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
+        .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 280 })
+        .addTo(poiLayerGroup);
+    });
+    poiShownCount += list.length;
+  }
 
   async function runPoiSearch(rawQuery){
     const query = (rawQuery || '').trim();
@@ -1824,7 +1907,11 @@
           c.routeProjection.perpMeters <= POI_RADIUS_METERS &&
           c.routeProjection.alongMeters >= userProgress.alongMeters
         );
-        inRange.forEach(c => { c.distMeters = c.routeProjection.perpMeters; });
+        // Still restricted to the route corridor above, but once we know
+        // where the user actually is, rank/display distance is measured
+        // from them rather than from the route line — "closest to me" beats
+        // "closest to the route" when the two disagree.
+        inRange.forEach(c => { c.distMeters = haversine(lastPos[0], lastPos[1], c.lat, c.lon); });
       }else{
         candidates.forEach(c => { c.distMeters = distanceToRouteMeters([c.lat, c.lon]); });
         inRange = candidates.filter(c => c.distMeters <= POI_RADIUS_METERS);
@@ -1845,60 +1932,16 @@
         if(localOnly.length) candidatePool = localOnly;
       }
 
-      const shown = rankCandidates(candidatePool).slice(0, POI_MAX_RESULTS);
-
       poiLayerGroup.clearLayers();
       poiDescribeQuery = query;
       poiCandidatesById = {};
-      shown.forEach(c=>{
-        poiCandidatesById[c.id] = { name: c.name, tags: c.tags };
-        const icon = L.divIcon({
-          className: '',
-          html: '<div class="poi-marker"><div class="poi-marker-pin"><span>' + iconForTags(c.tags) + '</span></div></div>',
-          iconSize: [26,26], iconAnchor: [13,26]
-        });
-        // Wikipedia-sourced candidates already carry a written summary, so
-        // there's nothing to fetch on click — show it straight away and
-        // skip the "Tell me more" button entirely.
-        const address = c.wikiExtract ? 'From Wikipedia' : (formatAddress(c.tags) || 'Address unavailable');
-        const descHtml = c.wikiExtract
-          ? '<div class="poi-popup-desc">' + escapeHtml(c.wikiExtract) + '</div>'
-          : '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
-              '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
-            '</div>';
-        // SF's own landmark registry and the National Register both
-        // additionally supply a designation number/year and a link to the
-        // official record — real primary-source documentation neither OSM
-        // nor Wikipedia offer.
-        let landmarkHtml = '';
-        const designationBits = [];
-        if(c.landmarkNo) designationBits.push('SF Landmark No. ' + c.landmarkNo);
-        if(c.landmarkYear) designationBits.push('designated ' + c.landmarkYear);
-        if(c.nrhpRefNum) designationBits.push('NRHP Ref. No. ' + c.nrhpRefNum);
-        if(c.nrhpYear) designationBits.push('listed ' + c.nrhpYear);
-        if(designationBits.length){
-          landmarkHtml += '<div class="poi-popup-address">' + escapeHtml(designationBits.join(', ')) + '</div>';
-        }
-        if(c.landmarkDocUrl){
-          landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.landmarkDocUrl) +
-            '" target="_blank" rel="noopener noreferrer">Designation report ↗</a></div>';
-        }
-        if(c.nrhpDocUrl){
-          landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.nrhpDocUrl) +
-            '" target="_blank" rel="noopener noreferrer">NRHP nomination form ↗</a></div>';
-        }
-        const popupHtml =
-          '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
-          '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
-          landmarkHtml +
-          descHtml;
-        L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
-          .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 280 })
-          .addTo(poiLayerGroup);
-      });
+      poiShownCount = 0;
+      poiRankedPool = rankCandidates(candidatePool);
+      renderPoiMarkerBatch(poiRankedPool.slice(0, POI_MAX_RESULTS));
 
       renderPoiStatus('');
-      renderPoiResultRow(shown.length, candidatePool.length);
+      renderPoiResultRow(poiShownCount, poiRankedPool.length);
+      updatePoiShowMoreButton();
     }catch(e){
       if(token !== poiSearchToken) return;
       console.error('[muni-walker] POI search failed:', e);
