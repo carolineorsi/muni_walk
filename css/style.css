@@ -234,6 +234,20 @@
   .poi-desc-loading{color:var(--muted);font-style:italic;}
   .poi-desc-error{color:#f0a3a3;}
 
+  .pirate-heading{display:flex;justify-content:space-between;align-items:center;margin-top:10px;}
+  .pirate-heading .stat-label{margin:0;}
+  #pirate-toggle{
+    position:relative;width:38px;height:22px;border-radius:12px;
+    background:#333c48;border:1px solid var(--line-hair);cursor:pointer;flex:0 0 auto;
+    transition:background .15s;
+  }
+  #pirate-toggle.on{background:var(--amber);border-color:var(--amber);}
+  #pirate-toggle .knob{
+    position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;
+    background:#0b0d10;transition:left .15s;
+  }
+  #pirate-toggle.on .knob{left:18px;}
+
   /* ---------- Live buses ---------- */
   .live-heading{display:flex;justify-content:space-between;align-items:center;}
   .live-heading .stat-label{margin:0;}
