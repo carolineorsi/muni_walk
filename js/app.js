@@ -1377,6 +1377,48 @@
     });
   }
 
+  // ---------- Chain / franchise filtering ----------
+  // The "find ___" search favors local, independent places. When a search
+  // turns up more than a screenful of results, national/regional chains are
+  // filtered out so the list leans local; with 20 or fewer results a chain
+  // stays in rather than leaving the list sparse.
+  const CHAIN_NAMES = [
+    // coffee
+    "starbucks","peet's coffee","peets coffee","philz coffee","blue bottle coffee",
+    "dunkin","dunkin donuts","tim hortons","the coffee bean & tea leaf",
+    "coffee bean & tea leaf","caribou coffee","dutch bros","tully's coffee",
+    "gloria jean's coffees","costa coffee",
+    // fast food
+    "mcdonald's","mcdonalds","burger king","wendy's","wendys","taco bell","kfc",
+    "kentucky fried chicken","popeyes","chick-fil-a","subway","jimmy john's",
+    "jersey mike's","panda express","in-n-out","in-n-out burger","chipotle",
+    "qdoba","panera bread","five guys","shake shack","sonic drive-in","sonic",
+    "arby's","domino's","domino's pizza","pizza hut","papa john's","little caesars",
+    "dairy queen","carl's jr","hardee's","jack in the box","del taco","el pollo loco",
+    "wingstop","raising cane's","whataburger","white castle","taco john's",
+    "checkers","captain d's","long john silver's","auntie anne's","cinnabon",
+    // casual / family dining
+    "applebee's","chili's","olive garden","denny's","ihop","outback steakhouse",
+    "red lobster","tgi friday's","tgi fridays","buffalo wild wings",
+    "cheesecake factory","p.f. chang's","red robin","texas roadhouse",
+    "cracker barrel","waffle house","ruby tuesday","boston market","black bear diner"
+  ];
+
+  function normalizeChainName(name){
+    return String(name || '')
+      .toLowerCase()
+      .replace(/[®™]/g,'')
+      .replace(/\s*#\s*\d+\s*$/,'') // trailing store-number suffix, e.g. "Subway #4821"
+      .replace(/\s+/g,' ')
+      .trim();
+  }
+
+  function isChainCandidate(c){
+    const name = normalizeChainName(c.name);
+    const brand = normalizeChainName(c.tags && (c.tags.brand || c.tags['brand:en']));
+    return CHAIN_NAMES.some(chain => name.includes(chain) || (brand && brand.includes(chain)));
+  }
+
   function categoryFallbackDescription(tags){
     const cat = tags.amenity || tags.shop || tags.tourism || tags.historic || tags.leisure;
     return cat ? ('A ' + String(cat).replace(/_/g,' ') + '.') : 'A point of interest along the route.';
@@ -1488,7 +1530,16 @@
         return;
       }
 
-      const shown = rankCandidates(inRange).slice(0, POI_MAX_RESULTS);
+      // Prefer local/independent places once there's a large enough pool to
+      // trim from; with 20 or fewer matches, keep chains in rather than
+      // shrinking an already-small list.
+      let candidatePool = inRange;
+      if(inRange.length > POI_MAX_RESULTS){
+        const localOnly = inRange.filter(c => !isChainCandidate(c));
+        if(localOnly.length) candidatePool = localOnly;
+      }
+
+      const shown = rankCandidates(candidatePool).slice(0, POI_MAX_RESULTS);
 
       poiLayerGroup.clearLayers();
       poiDescribeQuery = query;
@@ -1513,7 +1564,7 @@
       });
 
       renderPoiStatus('');
-      renderPoiResultRow(shown.length, inRange.length);
+      renderPoiResultRow(shown.length, candidatePool.length);
     }catch(e){
       if(token !== poiSearchToken) return;
       console.error('[muni-walker] POI search failed:', e);
