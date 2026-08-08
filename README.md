@@ -48,16 +48,21 @@ The app is a static site — no build step, no backend of its own.
   Overpass API](https://overpass-api.de/), queried directly by the
   browser, supplies the actual place data — names, coordinates, and
   addresses. For historical-type searches specifically, the browser also
-  queries two more sources directly and merges them in (each deduplicated
+  queries three more sources directly and merges them in (each deduplicated
   against results already found): [Wikipedia's geosearch
   API](https://www.mediawiki.org/wiki/API:Geosearch), for nearby articles
-  OSM doesn't have tagged, and [DataSF's Article 10 Designated Landmarks
+  OSM doesn't have tagged; [DataSF's Article 10 Designated Landmarks
   registry](https://data.sfgov.org/Housing-and-Buildings/Landmarks-Listed-in-Article-10-of-the-San-Francisc/97yj-54sx),
   the city's own official historic-landmark list, which also links out to
-  each landmark's real designation report. OSM's `historic=*` tagging in
-  SF leans heavily toward monuments and plaques, so together these fill in
-  richer sites — historic buildings, official city landmarks — that OSM
-  alone misses. The AI never invents a location; it only interprets intent
+  each landmark's real designation report; and the National Park Service's
+  [National Register of Historic Places point
+  layer](https://mapservices.nps.gov/arcgis/rest/services/cultural_resources/nrhp_locations/MapServer/0),
+  the federal counterpart to the SF registry, which links out to each
+  listing's actual nomination form on NPGallery. OSM's `historic=*` tagging
+  in SF leans heavily toward monuments and plaques, so together these fill
+  in richer sites — historic buildings, official city and national
+  landmarks — that OSM alone misses. The AI never invents a location; it
+  only interprets intent
   and describes real places it's given. Results are filtered client-side
   to those within 1/4 mile of the drawn route line — and, once your GPS
   position is known, to the active direction's line and only points still

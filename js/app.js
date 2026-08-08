@@ -1234,21 +1234,22 @@
   //
   // Pipeline: free text -> AI proxy turns it into OpenStreetMap tag filters
   // -> Overpass API (real, keyless OSM data) returns candidate places in a
-  // box around the route. For historical-type searches, two more keyless
+  // box around the route. For historical-type searches, three more keyless
   // sources are queried over the same area and merged in, each deduped
   // against what's already found (see isHistoricalPlan/isDuplicateOfCandidate
-  // below): Wikipedia's own geosearch (fetchWikipediaArticlesInBBox), and
-  // San Francisco's official Article 10 Designated Landmarks registry
-  // (fetchSfDesignatedLandmarks) — since OSM's historic tagging alone
+  // below): Wikipedia's own geosearch (fetchWikipediaArticlesInBBox), San
+  // Francisco's official Article 10 Designated Landmarks registry
+  // (fetchSfDesignatedLandmarks), and the National Register of Historic
+  // Places (fetchNrhpListingsInBBox) — since OSM's historic tagging alone
   // skews toward monuments/plaques. Candidates are then filtered down to
   // those actually within 1/4 mile of the drawn route line -> ranked
   // (visitor rating first when OSM has one, then closeness to the route
   // as the "best match" tiebreaker) and capped to the top 20 -> AI proxy
-  // writes a richer description for each OSM/SF-landmark result, looking
-  // places up when useful (Wikipedia-sourced results already carry their
-  // own summary, so they skip this step). The AI never invents a
-  // location: coordinates and addresses always come straight from
-  // OpenStreetMap, Wikipedia, or DataSF.
+  // writes a richer description for each OSM/SF-landmark/NRHP result,
+  // looking places up when useful (Wikipedia-sourced results already
+  // carry their own summary, so they skip this step). The AI never
+  // invents a location: coordinates and addresses always come straight
+  // from OpenStreetMap, Wikipedia, DataSF, or the National Park Service.
   // =====================================================================
   const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
   const POI_MAX_RESULTS = 20;                // cap on markers plotted
@@ -1471,6 +1472,60 @@
         landmarkNo: row.landmarkno || null,
         year: isFinite(year) ? year : null,
         docUrl: (row.designationdocument && row.designationdocument.url) || null
+      };
+    }).filter(Boolean);
+  }
+
+  const NRHP_ENDPOINT = "https://mapservices.nps.gov/arcgis/rest/services/cultural_resources/nrhp_locations/MapServer/0/query";
+
+  // The National Register of Historic Places — NPS's own keyless point
+  // layer, the federal counterpart to the SF landmark registry above. It
+  // covers sites that are nationally significant but were never put
+  // through the city's own Article 10 process (and vice versa), so it's
+  // queried and deduped the same way, not as a replacement. It's a
+  // nationwide dataset, so unlike the SF registry this is queried by bbox
+  // like Overpass/Wikipedia rather than fetched whole. Each listing links
+  // to its actual nomination form on NPGallery — the same kind of
+  // primary-source documentation the SF registry provides via its
+  // designation report.
+  //
+  // bbox: {south,west,north,east}, same shape as routeBBoxPadded()'s output.
+  // Returns [{id, name, lat, lon, address, refNum, year, docUrl}].
+  async function fetchNrhpListingsInBBox(bbox){
+    const params = new URLSearchParams({
+      where: '1=1',
+      geometry: [bbox.west, bbox.south, bbox.east, bbox.north].join(','),
+      geometryType: 'esriGeometryEnvelope',
+      inSR: '4326',
+      spatialRel: 'esriSpatialRelIntersects',
+      outFields: 'NRIS_Refnum,RESNAME,Address,CertDate',
+      outSR: '4326',
+      returnGeometry: 'true',
+      f: 'geojson'
+    });
+    const res = await fetch(NRHP_ENDPOINT + '?' + params.toString());
+    if(!res.ok){
+      const detail = await res.text().catch(()=> '');
+      throw new Error('National Register request failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    }
+    const data = await res.json();
+    const features = (data && data.features) || [];
+    return features.map(f=>{
+      const p = f.properties || {};
+      const coords = f.geometry && f.geometry.coordinates;
+      if(!Array.isArray(coords) || coords.length < 2 || !p.RESNAME) return null;
+      const refNum = p.NRIS_Refnum ? String(p.NRIS_Refnum).trim() : null;
+      const listedDate = p.CertDate != null ? new Date(p.CertDate) : null;
+      const year = listedDate && isFinite(listedDate.getTime()) ? listedDate.getFullYear() : null;
+      return {
+        id: 'nrhp/' + (refNum || p.RESNAME),
+        name: p.RESNAME,
+        lat: coords[1],
+        lon: coords[0],
+        address: p.Address || null,
+        refNum,
+        year,
+        docUrl: refNum ? 'https://npgallery.nps.gov/NRHP/GetAsset/NRHP/' + refNum + '_text' : null
       };
     }).filter(Boolean);
   }
@@ -1727,6 +1782,31 @@
           // DataSF is unreachable or the dataset has moved.
           console.warn('[muni-walker] SF landmark registry unavailable:', e);
         }
+
+        try{
+          renderPoiStatus('Checking the National Register of Historic Places for ' + (plan.label || query) + '…');
+          const nrhpListings = await fetchNrhpListingsInBBox(bbox);
+          if(token !== poiSearchToken) return;
+          nrhpListings.forEach(nr=>{
+            if(isDuplicateOfCandidate(nr, candidates)) return;
+            const tags = { historic: 'yes' };
+            if(nr.address) tags['addr:street'] = nr.address;
+            candidates.push({
+              id: nr.id,
+              name: nr.name,
+              lat: nr.lat,
+              lon: nr.lon,
+              tags,
+              nrhpRefNum: nr.refNum,
+              nrhpYear: nr.year,
+              nrhpDocUrl: nr.docUrl
+            });
+          });
+        }catch(e){
+          // Non-fatal — the other sources still stand on their own if NPS's
+          // ArcGIS service is unreachable or the layer's moved.
+          console.warn('[muni-walker] National Register lookup unavailable:', e);
+        }
       }
 
       // If we know where the user is and they're actually near the route,
@@ -1786,19 +1866,26 @@
           : '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
               '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
             '</div>';
-        // SF's own landmark registry additionally supplies a designation
-        // number/year and a link to the official report — real
-        // primary-source documentation neither OSM nor Wikipedia offer.
+        // SF's own landmark registry and the National Register both
+        // additionally supply a designation number/year and a link to the
+        // official record — real primary-source documentation neither OSM
+        // nor Wikipedia offer.
         let landmarkHtml = '';
-        if(c.landmarkNo || c.landmarkYear){
-          const bits = [];
-          if(c.landmarkNo) bits.push('SF Landmark No. ' + c.landmarkNo);
-          if(c.landmarkYear) bits.push('designated ' + c.landmarkYear);
-          landmarkHtml += '<div class="poi-popup-address">' + escapeHtml(bits.join(', ')) + '</div>';
+        const designationBits = [];
+        if(c.landmarkNo) designationBits.push('SF Landmark No. ' + c.landmarkNo);
+        if(c.landmarkYear) designationBits.push('designated ' + c.landmarkYear);
+        if(c.nrhpRefNum) designationBits.push('NRHP Ref. No. ' + c.nrhpRefNum);
+        if(c.nrhpYear) designationBits.push('listed ' + c.nrhpYear);
+        if(designationBits.length){
+          landmarkHtml += '<div class="poi-popup-address">' + escapeHtml(designationBits.join(', ')) + '</div>';
         }
         if(c.landmarkDocUrl){
           landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.landmarkDocUrl) +
             '" target="_blank" rel="noopener noreferrer">Designation report ↗</a></div>';
+        }
+        if(c.nrhpDocUrl){
+          landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.nrhpDocUrl) +
+            '" target="_blank" rel="noopener noreferrer">NRHP nomination form ↗</a></div>';
         }
         const popupHtml =
           '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
