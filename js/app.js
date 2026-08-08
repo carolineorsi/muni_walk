@@ -1229,6 +1229,13 @@
 
   document.getElementById('live-toggle').addEventListener('click', ()=> setLiveEnabled(!liveEnabled));
 
+  function setPirateMode(on){
+    pirateMode = on;
+    document.getElementById('pirate-toggle').classList.toggle('on', on);
+  }
+
+  document.getElementById('pirate-toggle').addEventListener('click', ()=> setPirateMode(!pirateMode));
+
   // =====================================================================
   // "Find ___ along the route" — AI-assisted point-of-interest search.
   //
@@ -1269,6 +1276,10 @@
   // someone clicks, `candidates` from runPoiSearch is long out of scope).
   let poiDescribeQuery = '';
   let poiCandidatesById = {};
+
+  // When on, AI-written descriptions (and the local fallback used when the
+  // AI proxy is unreachable) are requested/rendered in a pirate's voice.
+  let pirateMode = false;
 
   // Full ranked result list for the current search (can be much longer than
   // what's plotted) plus how many of it are currently shown as markers, so
@@ -1661,8 +1672,13 @@
     return CHAIN_NAMES.some(chain => name.includes(chain) || (brand && brand.includes(chain)));
   }
 
-  function categoryFallbackDescription(tags){
+  function categoryFallbackDescription(tags, pirate){
     const cat = tags.amenity || tags.shop || tags.tourism || tags.historic || tags.leisure;
+    if(pirate){
+      return cat
+        ? ('Arrr, a ' + String(cat).replace(/_/g,' ') + ', matey.')
+        : 'Arrr, a point o’ interest along the route, matey.';
+    }
     return cat ? ('A ' + String(cat).replace(/_/g,' ') + '.') : 'A point of interest along the route.';
   }
 
@@ -1972,10 +1988,11 @@
     try{
       const descResult = await fetchAIProxyJSON('describe', {
         query: poiDescribeQuery,
-        points: [{ id, name: candidate.name, tags: candidate.tags }]
+        points: [{ id, name: candidate.name, tags: candidate.tags }],
+        pirate: pirateMode
       });
       const entry = (descResult.descriptions || []).find(d => d.id === id);
-      container.textContent = (entry && entry.description) || categoryFallbackDescription(candidate.tags);
+      container.textContent = (entry && entry.description) || categoryFallbackDescription(candidate.tags, pirateMode);
     }catch(err){
       console.warn('[muni-walker] AI description unavailable:', err);
       container.innerHTML = '<span class="poi-desc-error">Couldn’t load a description.</span> ' +

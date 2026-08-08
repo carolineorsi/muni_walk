@@ -22,11 +22,13 @@
 //     [[{key:"amenity",value:"restaurant"},{key:"cuisine",value:"mexican"}],
 //      [{key:"amenity",value:"fast_food"}, {key:"cuisine",value:"mexican"}]]
 //
-//   { action: "describe", query: "tacos", points: [{id, name, tags}, ...] }
+//   { action: "describe", query: "tacos", points: [{id, name, tags}, ...], pirate: false }
 //     -> { descriptions: [{id, description}, ...] }
 //     `points` should be capped client-side (<=20) — each one costs tokens,
 //     and a place the model isn't already confident about may cost an
-//     extra web search (see MAX_WEB_SEARCHES_PER_DESCRIBE below).
+//     extra web search (see MAX_WEB_SEARCHES_PER_DESCRIBE below). `pirate`
+//     is optional (defaults to false) — when true, descriptions are written
+//     in a pirate's voice while keeping the underlying facts unchanged.
 //
 // Cost controls: only the app's own origin may call this (checked against
 // the ALLOWED_ORIGINS var below), and every request is rate-limited both
@@ -275,6 +277,7 @@ async function handleDescribe(env, body, corsHeaders) {
   const query = String(body.query || "").trim().slice(0, 200);
   const points = Array.isArray(body.points) ? body.points.slice(0, MAX_POINTS_PER_DESCRIBE) : [];
   if (!points.length) return jsonResponse({ descriptions: [] }, 200, corsHeaders);
+  const pirate = !!body.pirate;
 
   const pointsForModel = points.map((p) => ({
     id: String(p.id),
@@ -290,11 +293,17 @@ async function handleDescribe(env, body, corsHeaders) {
     "the place is actually like rather than its logistics. Don't bother searching for well-known chains or when the tags " +
     "alone are enough. Write about the CHARACTER of each place, not its logistics: for restaurants/cafes/bars, the kind " +
     "of food or drink and the vibe; for historical or cultural sites, a bit of the history or what it's known for. Leave " +
-    "out hours, payment methods, accessibility, phone numbers, and websites even if you find them. Once you've looked " +
-    "into whatever you need to, call emit_descriptions exactly once with one entry for every place given. Ground each " +
-    "description in what you found or in well-established facts — never invent ratings, hours, prices, or awards. Write " +
-    "plain prose only — never include HTML or wiki markup (like <cite>, <ref>, or similar tags) even if a source you " +
-    "looked up displays it that way.";
+    "out hours, payment methods, accessibility, phone numbers, and websites even if you find them. " +
+    (pirate
+      ? "Write every description in the voice of a hearty pirate — salty seafaring slang, words like \"arrr,\" \"ye,\" " +
+        "\"matey,\" and \"be\" in place of \"is\"/\"are,\" nautical turns of phrase — while keeping every fact accurate. " +
+        "The pirate voice is a costume for real information, not a license to invent history: never let it soften or " +
+        "replace the actual facts you found. "
+      : "") +
+    "Once you've looked into whatever you need to, call emit_descriptions exactly once with one entry for every place " +
+    "given. Ground each description in what you found or in well-established facts — never invent ratings, hours, " +
+    "prices, or awards. Write plain prose only — never include HTML or wiki markup (like <cite>, <ref>, or similar tags) " +
+    "even if a source you looked up displays it that way.";
   const userText =
     `The user searched for: "${query}"\n\n` +
     `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
