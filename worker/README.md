@@ -11,9 +11,11 @@ things:
    capped at 20), writes a richer 2-3 sentence description for each. When
    the model isn't already confident about a place, it can use Anthropic's
    `web_search` tool to look up real facts about it (history, specialty,
-   what it's known for) before writing the description. Uses Sonnet
-   (`DESCRIBE_MODEL`) — writing quality actually matters here, and it's the
-   one call already bounded by `MAX_POINTS_PER_DESCRIBE`.
+   what it's known for) before writing the description. Also runs on Haiku
+   (`DESCRIBE_MODEL`) — the quality jump came from `web_search` actually
+   grounding the description, not from a stronger model, so it stays on the
+   cheaper tier. Bump `DESCRIBE_MODEL` to a Sonnet model id if you want to
+   try trading cost for writing quality again.
 
 It never returns coordinates on its own — those always come straight from
 OpenStreetMap's Overpass API, queried directly by the browser, and the
@@ -52,10 +54,6 @@ already knows or that don't need it, so most calls use fewer. Factor that
 into your Anthropic Console spend limit (see below) alongside the request
 caps above. Using `web_search` also requires that tool be enabled for your
 Anthropic API key/org.
-
-`describe` also runs on Sonnet rather than Haiku, which costs more per
-token than `interpret`'s model — worth knowing when setting your spend
-limit, though the request caps above still bound the worst case.
 
 **The real backstop** doesn't live in this Worker at all: set a spend limit
 on your [Anthropic Console](https://console.anthropic.com) under Settings →
