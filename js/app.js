@@ -167,7 +167,15 @@
   // update this URL after deploying it (see worker/README.md).
   const AI_PROXY_BASE = "https://muni-walk-ai-search.caroline-orsi.workers.dev/";
 
-  const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
+  // overpass-api.de is the main public instance and it's often overloaded,
+  // returning a 504 (as an HTML error page, not JSON) under load. Kumi
+  // Systems mirrors the same public database, so on a transient failure we
+  // retry a couple times and then fall back to it before giving up.
+  const OVERPASS_ENDPOINTS = [
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter"
+  ];
+  const OVERPASS_RETRY_STATUSES = new Set([429, 502, 503, 504]);
 
   // Wikipedia's geosearch, queried directly like Overpass above (no key,
   // CORS enabled via origin=*). OpenStreetMap's `historic=*` tagging in SF
@@ -1278,18 +1286,45 @@
     return res.json();
   }
 
+  function sleep(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+
+  // Overpass's public instances shed load with a 504 (and occasionally
+  // 429/502/503) that comes back as an HTML error page rather than JSON.
+  // Retry those transiently on the same endpoint with backoff, and if an
+  // endpoint keeps failing move on to the next mirror in OVERPASS_ENDPOINTS
+  // before finally surfacing a plain-English error instead of the raw HTML.
   async function fetchOverpass(query){
-    const res = await fetch(OVERPASS_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: 'data=' + encodeURIComponent(query)
-    });
-    if(!res.ok){
-      const detail = await res.text().catch(()=> '');
-      throw new Error('Overpass request failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    const attemptsPerEndpoint = 2;
+    let lastStatus = null;
+    for(let e = 0; e < OVERPASS_ENDPOINTS.length; e++){
+      const endpoint = OVERPASS_ENDPOINTS[e];
+      for(let attempt = 0; attempt < attemptsPerEndpoint; attempt++){
+        let res;
+        try{
+          res = await fetch(endpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: 'data=' + encodeURIComponent(query)
+          });
+        }catch(err){
+          lastStatus = null;
+          break; // network failure — no point retrying the same endpoint, try the next mirror
+        }
+        if(res.ok){
+          const data = await res.json();
+          return Array.isArray(data.elements) ? data.elements : [];
+        }
+        lastStatus = res.status;
+        if(!OVERPASS_RETRY_STATUSES.has(res.status)) break; // not a transient failure — no point retrying
+        const isLastAttempt = e === OVERPASS_ENDPOINTS.length - 1 && attempt === attemptsPerEndpoint - 1;
+        if(!isLastAttempt) await sleep(1000 * Math.pow(2, attempt));
+      }
     }
-    const data = await res.json();
-    return Array.isArray(data.elements) ? data.elements : [];
+    throw new Error(
+      lastStatus
+        ? "OpenStreetMap's search service is busy right now (" + lastStatus + "). Please try again in a moment."
+        : "Couldn't reach OpenStreetMap's search service. Check your connection and try again."
+    );
   }
 
   function escapeOverpassString(s){
