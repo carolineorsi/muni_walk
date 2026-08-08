@@ -1220,6 +1220,7 @@
   const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
   const POI_MAX_RESULTS = 20;                // cap on markers plotted / described
   const POI_DESCRIBE_CAP = 20;               // matches the worker's own cap
+  const PROGRESS_VISIBILITY_RADIUS_METERS = 0.5 * 1609.344; // half a mile — also used to decide the user is "on" the route for ahead-of-you filtering
 
   let poiSearchToken = 0; // bumped to invalidate stale in-flight searches
 
@@ -1446,11 +1447,30 @@
         candidates.push({ id, name, lat, lon, tags });
       });
 
-      candidates.forEach(c => { c.distMeters = distanceToRouteMeters([c.lat, c.lon]); });
-      const inRange = candidates.filter(c => c.distMeters <= POI_RADIUS_METERS);
+      // If we know where the user is and they're actually near the route,
+      // restrict results to the active direction's line (not the other
+      // direction's, which may run down different streets) and to points
+      // *ahead* of them along it — nothing already behind.
+      const userProgress = (lastPos && progressModel) ? computeProgress(lastPos) : null;
+      const userIsAlongRoute = !!userProgress && userProgress.perpMeters <= PROGRESS_VISIBILITY_RADIUS_METERS;
+
+      let inRange;
+      if(userIsAlongRoute){
+        candidates.forEach(c => { c.routeProjection = computeProgress([c.lat, c.lon]); });
+        inRange = candidates.filter(c =>
+          c.routeProjection &&
+          c.routeProjection.perpMeters <= POI_RADIUS_METERS &&
+          c.routeProjection.alongMeters >= userProgress.alongMeters
+        );
+        inRange.forEach(c => { c.distMeters = c.routeProjection.perpMeters; });
+      }else{
+        candidates.forEach(c => { c.distMeters = distanceToRouteMeters([c.lat, c.lon]); });
+        inRange = candidates.filter(c => c.distMeters <= POI_RADIUS_METERS);
+      }
 
       if(!inRange.length){
-        renderPoiStatus('No ' + (plan.label || query) + ' found within 1/4 mile of this route.', false);
+        const where = userIsAlongRoute ? ' ahead of you on this route.' : ' within 1/4 mile of this route.';
+        renderPoiStatus('No ' + (plan.label || query) + ' found' + where, false);
         return;
       }
 
@@ -1724,8 +1744,6 @@
     if(dist && dist !== '—') parts.push(dist + ' off-route');
     el.textContent = parts.join(' · ');
   }
-
-  const PROGRESS_VISIBILITY_RADIUS_METERS = 0.5 * 1609.344; // half a mile
 
   function updateProgressReadout(pos){
     const block = document.getElementById('progress-block');
