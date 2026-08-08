@@ -40,30 +40,33 @@ The app is a static site — no build step, no backend of its own.
 - Live vehicle positions and stop arrival predictions come from
   [511.org](https://511.org)'s Transit API, proxied through a small
   Cloudflare Worker that keeps the API key server-side.
-- "Find along the route" combines a Cloudflare Worker with two open,
-  keyless place-data sources: the Worker (`worker/`) holds an Anthropic API
-  key server-side and turns your free-text request into OpenStreetMap tag
+- "Find along the route" combines a Cloudflare Worker with open, keyless
+  place-data sources: the Worker (`worker/`) holds an Anthropic API key
+  server-side and turns your free-text request into OpenStreetMap tag
   filters (and, on request, writes a richer description of a single
   result, looking it up on the web when it helps); [OpenStreetMap's
   Overpass API](https://overpass-api.de/), queried directly by the
   browser, supplies the actual place data — names, coordinates, and
   addresses. For historical-type searches specifically, the browser also
-  queries [Wikipedia's geosearch
-  API](https://www.mediawiki.org/wiki/API:Geosearch) directly over the
-  same area and merges in any nearby articles OSM doesn't have tagged
-  (deduplicated against OSM results already linked to the same article) —
-  OSM's `historic=*` tagging in SF leans heavily toward monuments and
-  plaques, so this fills in richer sites like historic buildings and
-  landmarks that only Wikipedia has written up. The AI never invents a
-  location; it only interprets intent and describes real places it's
-  given. Results are filtered client-side to those within 1/4 mile of the
-  drawn route line — and, once your GPS position is known, to the active
-  direction's line and only points still ahead of you on it — then ranked
-  by visitor rating (if OSM has one) and closeness to the route, capped to
-  the top 20. Descriptions aren't written up front for every result;
-  tapping a pin's "Tell me more" button fetches one just for that place —
-  Wikipedia-sourced results already carry their own summary, so they skip
-  straight to showing it. See `worker/README.md` to deploy the Worker.
+  queries two more sources directly and merges them in (each deduplicated
+  against results already found): [Wikipedia's geosearch
+  API](https://www.mediawiki.org/wiki/API:Geosearch), for nearby articles
+  OSM doesn't have tagged, and [DataSF's Article 10 Designated Landmarks
+  registry](https://data.sfgov.org/Housing-and-Buildings/Landmarks-Listed-in-Article-10-of-the-San-Francisc/97yj-54sx),
+  the city's own official historic-landmark list, which also links out to
+  each landmark's real designation report. OSM's `historic=*` tagging in
+  SF leans heavily toward monuments and plaques, so together these fill in
+  richer sites — historic buildings, official city landmarks — that OSM
+  alone misses. The AI never invents a location; it only interprets intent
+  and describes real places it's given. Results are filtered client-side
+  to those within 1/4 mile of the drawn route line — and, once your GPS
+  position is known, to the active direction's line and only points still
+  ahead of you on it — then ranked by visitor rating (if OSM has one) and
+  closeness to the route, capped to the top 20. Descriptions aren't
+  written up front for every result; tapping a pin's "Tell me more" button
+  fetches one just for that place — Wikipedia-sourced results already
+  carry their own summary, so they skip straight to showing it. See
+  `worker/README.md` to deploy the Worker.
 
 ## Project structure
 

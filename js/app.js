@@ -1226,18 +1226,21 @@
   //
   // Pipeline: free text -> AI proxy turns it into OpenStreetMap tag filters
   // -> Overpass API (real, keyless OSM data) returns candidate places in a
-  // box around the route. For historical-type searches, Wikipedia's own
-  // geosearch is queried over the same box and merged in (see
-  // isHistoricalPlan/fetchWikipediaArticlesInBBox below) since OSM's
-  // historic tagging alone skews toward monuments/plaques. Candidates are
-  // then filtered down to those actually within 1/4 mile of the drawn
-  // route line -> ranked (visitor rating first when OSM has one, then
-  // closeness to the route as the "best match" tiebreaker) and capped to
-  // the top 20 -> AI proxy writes a richer description for each OSM-only
-  // result, looking places up when useful (Wikipedia-sourced results
-  // already carry their own summary, so they skip this step). The AI
-  // never invents a location: coordinates and addresses always come
-  // straight from OpenStreetMap or Wikipedia.
+  // box around the route. For historical-type searches, two more keyless
+  // sources are queried over the same area and merged in, each deduped
+  // against what's already found (see isHistoricalPlan/isDuplicateOfCandidate
+  // below): Wikipedia's own geosearch (fetchWikipediaArticlesInBBox), and
+  // San Francisco's official Article 10 Designated Landmarks registry
+  // (fetchSfDesignatedLandmarks) — since OSM's historic tagging alone
+  // skews toward monuments/plaques. Candidates are then filtered down to
+  // those actually within 1/4 mile of the drawn route line -> ranked
+  // (visitor rating first when OSM has one, then closeness to the route
+  // as the "best match" tiebreaker) and capped to the top 20 -> AI proxy
+  // writes a richer description for each OSM/SF-landmark result, looking
+  // places up when useful (Wikipedia-sourced results already carry their
+  // own summary, so they skip this step). The AI never invents a
+  // location: coordinates and addresses always come straight from
+  // OpenStreetMap, Wikipedia, or DataSF.
   // =====================================================================
   const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
   const POI_MAX_RESULTS = 20;                // cap on markers plotted
@@ -1390,18 +1393,78 @@
       .filter(Boolean);
   }
 
-  // Skip a Wikipedia article that's almost certainly the same real-world
-  // place as an OSM candidate already found (either OSM links straight to
-  // it via a wikipedia tag, or they're right on top of each other with a
-  // matching name) so the same landmark doesn't get two pins.
-  function isDuplicateOfOsmCandidate(article, osmCandidates){
+  // Skip an item (a Wikipedia article or SF landmark row) that's almost
+  // certainly the same real-world place as a candidate already found from
+  // another source (either OSM links straight to it via a wikipedia tag,
+  // or they're right on top of each other with a matching name) so the
+  // same landmark doesn't get two pins.
+  function isDuplicateOfCandidate(item, existingCandidates){
     const normalize = s => String(s || '').toLowerCase().replace(/^[a-z]{2,3}:/, '').trim();
-    const articleName = normalize(article.name);
-    return osmCandidates.some(c=>{
+    const itemName = normalize(item.name);
+    return existingCandidates.some(c=>{
       const wikiTag = normalize(c.tags && c.tags.wikipedia);
-      if(wikiTag && wikiTag === articleName) return true;
-      return normalize(c.name) === articleName && haversine(c.lat, c.lon, article.lat, article.lon) < 75;
+      if(wikiTag && wikiTag === itemName) return true;
+      return normalize(c.name) === itemName && haversine(c.lat, c.lon, item.lat, item.lon) < 75;
     });
+  }
+
+  const SF_LANDMARKS_ENDPOINT = "https://data.sfgov.org/resource/97yj-54sx.json";
+  const SF_LANDMARKS_ROW_CAP = 2000; // headroom above the ~300-400 landmarks the city has actually designated
+
+  // The city's own Article 10 Designated Landmarks registry (DataSF
+  // resource 97yj-54sx) — the most authoritative historic-site source
+  // available, and the only one of the three that comes with a link to
+  // the actual designation report. It's small enough (a few hundred rows
+  // citywide) to fetch whole and filter down to the route locally, the
+  // same way the other two sources end up filtered.
+  //
+  // Each row's `the_geom` is a building-footprint polygon, not a point —
+  // buildOverpassQuery/fetchWikipediaArticlesInBBox both key off a single
+  // lat/lon, so landmarkCentroid() below approximates one by averaging
+  // the footprint's corners, which is accurate enough at building scale
+  // for dropping a pin.
+  function landmarkCentroid(geom){
+    if(!geom || !Array.isArray(geom.coordinates)) return null;
+    const ring = geom.type === 'MultiPolygon' ? (geom.coordinates[0] && geom.coordinates[0][0])
+      : geom.type === 'Polygon' ? geom.coordinates[0]
+      : null;
+    if(!Array.isArray(ring) || !ring.length) return null;
+    let sumLat = 0, sumLon = 0, n = 0;
+    ring.forEach(pt=>{
+      if(Array.isArray(pt) && pt.length >= 2 && isFinite(pt[0]) && isFinite(pt[1])){
+        sumLon += pt[0]; sumLat += pt[1]; n++;
+      }
+    });
+    return n ? { lat: sumLat / n, lon: sumLon / n } : null;
+  }
+
+  // Returns [{id, name, lat, lon, address, landmarkNo, year, docUrl}].
+  async function fetchSfDesignatedLandmarks(){
+    const params = new URLSearchParams({
+      $limit: String(SF_LANDMARKS_ROW_CAP),
+      $select: 'the_geom,name,address,landmarkno,yeardesignated,designationdocument'
+    });
+    const res = await fetch(SF_LANDMARKS_ENDPOINT + '?' + params.toString());
+    if(!res.ok){
+      const detail = await res.text().catch(()=> '');
+      throw new Error('SF landmark registry request failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    }
+    const rows = await res.json();
+    return rows.map(row=>{
+      const centroid = landmarkCentroid(row.the_geom);
+      if(!centroid || !row.name) return null;
+      const year = parseInt(row.yeardesignated, 10);
+      return {
+        id: 'sf-landmark/' + (row.landmarkno || row.name),
+        name: row.name,
+        lat: centroid.lat,
+        lon: centroid.lon,
+        address: row.address || null,
+        landmarkNo: row.landmarkno || null,
+        year: isFinite(year) ? year : null,
+        docUrl: (row.designationdocument && row.designationdocument.url) || null
+      };
+    }).filter(Boolean);
   }
 
   // Route bounds padded out by the search radius (plus a little slack) so
@@ -1616,7 +1679,7 @@
           const articles = await fetchWikipediaArticlesInBBox(bbox);
           if(token !== poiSearchToken) return;
           articles.forEach(a=>{
-            if(isDuplicateOfOsmCandidate(a, candidates)) return;
+            if(isDuplicateOfCandidate(a, candidates)) return;
             candidates.push({
               id: a.id,
               name: a.name,
@@ -1630,6 +1693,31 @@
           // Non-fatal — OSM results still stand on their own if Wikipedia's
           // API is unreachable or rate-limiting us.
           console.warn('[muni-walker] Wikipedia geosearch unavailable:', e);
+        }
+
+        try{
+          renderPoiStatus("Checking San Francisco's landmark registry for " + (plan.label || query) + '…');
+          const landmarks = await fetchSfDesignatedLandmarks();
+          if(token !== poiSearchToken) return;
+          landmarks.forEach(lm=>{
+            if(isDuplicateOfCandidate(lm, candidates)) return;
+            const tags = { historic: 'designated_landmark' };
+            if(lm.address) tags['addr:street'] = lm.address;
+            candidates.push({
+              id: lm.id,
+              name: lm.name,
+              lat: lm.lat,
+              lon: lm.lon,
+              tags,
+              landmarkNo: lm.landmarkNo,
+              landmarkYear: lm.year,
+              landmarkDocUrl: lm.docUrl
+            });
+          });
+        }catch(e){
+          // Non-fatal — OSM/Wikipedia results still stand on their own if
+          // DataSF is unreachable or the dataset has moved.
+          console.warn('[muni-walker] SF landmark registry unavailable:', e);
         }
       }
 
@@ -1690,9 +1778,24 @@
           : '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
               '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
             '</div>';
+        // SF's own landmark registry additionally supplies a designation
+        // number/year and a link to the official report — real
+        // primary-source documentation neither OSM nor Wikipedia offer.
+        let landmarkHtml = '';
+        if(c.landmarkNo || c.landmarkYear){
+          const bits = [];
+          if(c.landmarkNo) bits.push('SF Landmark No. ' + c.landmarkNo);
+          if(c.landmarkYear) bits.push('designated ' + c.landmarkYear);
+          landmarkHtml += '<div class="poi-popup-address">' + escapeHtml(bits.join(', ')) + '</div>';
+        }
+        if(c.landmarkDocUrl){
+          landmarkHtml += '<div class="poi-popup-link"><a href="' + escapeHtml(c.landmarkDocUrl) +
+            '" target="_blank" rel="noopener noreferrer">Designation report ↗</a></div>';
+        }
         const popupHtml =
           '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
           '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
+          landmarkHtml +
           descHtml;
         L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
           .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 280 })
