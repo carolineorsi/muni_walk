@@ -188,6 +188,10 @@
   }
   #poi-search-result-row.visible{display:flex;}
   #poi-search-result-count{font-family:'Space Mono',monospace;font-size:11.5px;color:var(--muted);}
+  .poi-result-actions{display:flex;align-items:center;gap:12px;}
+  #poi-show-more-btn{display:none;}
+  #poi-show-more-btn.visible{display:inline-block;}
+  #poi-show-more-btn,
   #poi-clear-btn{
     background:none;border:none;color:var(--amber);
     font-family:'Inter';font-size:12px;font-weight:600;
