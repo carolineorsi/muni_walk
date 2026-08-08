@@ -65,6 +65,8 @@ still can't cost you more than you've capped.
 
 ## Deploy
 
+### One-time setup
+
 ```sh
 cd worker
 npm install -g wrangler   # if you don't already have it
@@ -74,7 +76,9 @@ wrangler secret put ANTHROPIC_API_KEY   # paste your Anthropic key when prompted
 ```
 
 Then edit `wrangler.toml`'s `[vars]` block — in particular make sure
-`ALLOWED_ORIGINS` lists every origin the app is actually served from — and:
+`ALLOWED_ORIGINS` lists every origin the app is actually served from.
+
+### Manual deploy
 
 ```sh
 wrangler deploy
@@ -83,6 +87,23 @@ wrangler deploy
 Wrangler prints the deployed URL (something like
 `https://muni-walk-ai-search.<your-subdomain>.workers.dev`). Copy it into
 `AI_PROXY_BASE` near the top of `js/app.js`.
+
+### Automatic deploy on merge
+
+`.github/workflows/deploy-worker.yml` redeploys the Worker automatically
+whenever a change under `worker/` lands on `main` (i.e. when a PR touching
+it is merged). It needs two repository secrets set once under
+**Settings → Secrets and variables → Actions**:
+
+- `CLOUDFLARE_API_TOKEN` — a token scoped to "Edit Cloudflare Workers"
+  (Workers Scripts: Edit, Workers KV Storage: Edit) for your account.
+- `CLOUDFLARE_ACCOUNT_ID` — found on the Cloudflare dashboard's Workers &
+  Pages overview page, right sidebar.
+
+The `ANTHROPIC_API_KEY` secret and the `RATE_LIMIT_KV` namespace are
+Worker-side config set once via `wrangler secret put` / `wrangler kv
+namespace create` above — the CI job doesn't touch either, it only pushes
+code and `wrangler.toml`'s `[vars]`/`[[kv_namespaces]]` binding.
 
 ## API
 
