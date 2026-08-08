@@ -169,6 +169,14 @@
 
   const OVERPASS_ENDPOINT = "https://overpass-api.de/api/interpreter";
 
+  // Wikipedia's geosearch, queried directly like Overpass above (no key,
+  // CORS enabled via origin=*). OpenStreetMap's `historic=*` tagging in SF
+  // is sparse and skews toward plaques/monuments, so for historical
+  // searches this supplements it with real Wikipedia articles near the
+  // route — places that were never tagged in OSM at all, with a proper
+  // summary already written instead of one guessed from a web search.
+  const WIKIPEDIA_GEOSEARCH_ENDPOINT = "https://en.wikipedia.org/w/api.php";
+
   // ---------- Embedded route shapes ----------
   // EMBEDDED_ROUTES comes from routes-data.js, loaded before this script.
   const EMBEDDED_ROUTE_NAMES = Object.keys(EMBEDDED_ROUTES);
@@ -1210,12 +1218,18 @@
   //
   // Pipeline: free text -> AI proxy turns it into OpenStreetMap tag filters
   // -> Overpass API (real, keyless OSM data) returns candidate places in a
-  // box around the route -> filtered down to those actually within 1/4
-  // mile of the drawn route line -> ranked (visitor rating first when OSM
-  // has one, then closeness to the route as the "best match" tiebreaker)
-  // and capped to the top 20 -> AI proxy writes a richer description for
-  // each, looking places up when useful. The AI never invents a location:
-  // coordinates and addresses always come straight from OpenStreetMap.
+  // box around the route. For historical-type searches, Wikipedia's own
+  // geosearch is queried over the same box and merged in (see
+  // isHistoricalPlan/fetchWikipediaArticlesInBBox below) since OSM's
+  // historic tagging alone skews toward monuments/plaques. Candidates are
+  // then filtered down to those actually within 1/4 mile of the drawn
+  // route line -> ranked (visitor rating first when OSM has one, then
+  // closeness to the route as the "best match" tiebreaker) and capped to
+  // the top 20 -> AI proxy writes a richer description for each OSM-only
+  // result, looking places up when useful (Wikipedia-sourced results
+  // already carry their own summary, so they skip this step). The AI
+  // never invents a location: coordinates and addresses always come
+  // straight from OpenStreetMap or Wikipedia.
   // =====================================================================
   const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
   const POI_MAX_RESULTS = 20;                // cap on markers plotted
@@ -1295,6 +1309,64 @@
       return '  nwr' + tagClauses + '(' + bboxStr + ');';
     }).join('\n');
     return '[out:json][timeout:25];\n(\n' + clauses + '\n);\nout center 100;';
+  }
+
+  // True when the AI proxy's interpret plan is historical in nature (see
+  // the "favor historic=*" guidance in worker/ai-search-worker.js) — the
+  // signal to also check Wikipedia rather than relying on OSM tags alone.
+  function isHistoricalPlan(plan){
+    return (plan.queries || []).some(group =>
+      (group || []).some(f => f && (f.key === 'historic' || f.key === 'heritage'))
+    );
+  }
+
+  const WIKIPEDIA_MAX_RESULTS = 40;
+
+  // bbox: {south,west,north,east}, same shape as routeBBoxPadded()'s output.
+  // Returns [{id, name, lat, lon, extract}] — extract is Wikipedia's own
+  // intro summary (already written, no AI call needed to use it).
+  async function fetchWikipediaArticlesInBBox(bbox){
+    const params = new URLSearchParams({
+      action: 'query',
+      format: 'json',
+      origin: '*',
+      generator: 'geosearch',
+      ggsbbox: [bbox.north, bbox.west, bbox.south, bbox.east].join('|'),
+      ggslimit: String(WIKIPEDIA_MAX_RESULTS),
+      prop: 'coordinates|extracts',
+      exintro: '1',
+      explaintext: '1',
+      exchars: '400', // matches the AI proxy's own <=400-char target for describe, for a consistent popup length
+      exlimit: 'max'
+    });
+    const res = await fetch(WIKIPEDIA_GEOSEARCH_ENDPOINT + '?' + params.toString());
+    if(!res.ok){
+      const detail = await res.text().catch(()=> '');
+      throw new Error('Wikipedia geosearch failed (' + res.status + ')' + (detail ? ': ' + detail.slice(0,200) : ''));
+    }
+    const data = await res.json();
+    const pages = (data.query && data.query.pages) || {};
+    return Object.values(pages)
+      .map(p=>{
+        const coord = Array.isArray(p.coordinates) ? p.coordinates[0] : null;
+        if(!coord || !p.title) return null;
+        return { id: 'wikipedia/' + p.pageid, name: p.title, lat: coord.lat, lon: coord.lon, extract: (p.extract || '').trim() };
+      })
+      .filter(Boolean);
+  }
+
+  // Skip a Wikipedia article that's almost certainly the same real-world
+  // place as an OSM candidate already found (either OSM links straight to
+  // it via a wikipedia tag, or they're right on top of each other with a
+  // matching name) so the same landmark doesn't get two pins.
+  function isDuplicateOfOsmCandidate(article, osmCandidates){
+    const normalize = s => String(s || '').toLowerCase().replace(/^[a-z]{2,3}:/, '').trim();
+    const articleName = normalize(article.name);
+    return osmCandidates.some(c=>{
+      const wikiTag = normalize(c.tags && c.tags.wikipedia);
+      if(wikiTag && wikiTag === articleName) return true;
+      return normalize(c.name) === articleName && haversine(c.lat, c.lon, article.lat, article.lon) < 75;
+    });
   }
 
   // Route bounds padded out by the search radius (plus a little slack) so
@@ -1503,6 +1575,29 @@
         candidates.push({ id, name, lat, lon, tags });
       });
 
+      if(isHistoricalPlan(plan)){
+        try{
+          renderPoiStatus('Checking Wikipedia for ' + (plan.label || query) + '…');
+          const articles = await fetchWikipediaArticlesInBBox(bbox);
+          if(token !== poiSearchToken) return;
+          articles.forEach(a=>{
+            if(isDuplicateOfOsmCandidate(a, candidates)) return;
+            candidates.push({
+              id: a.id,
+              name: a.name,
+              lat: a.lat,
+              lon: a.lon,
+              tags: { historic: 'yes', wikipedia: 'en:' + a.name },
+              wikiExtract: a.extract || null
+            });
+          });
+        }catch(e){
+          // Non-fatal — OSM results still stand on their own if Wikipedia's
+          // API is unreachable or rate-limiting us.
+          console.warn('[muni-walker] Wikipedia geosearch unavailable:', e);
+        }
+      }
+
       // If we know where the user is and they're actually near the route,
       // restrict results to the active direction's line (not the other
       // direction's, which may run down different streets) and to points
@@ -1551,13 +1646,19 @@
           html: '<div class="poi-marker"><div class="poi-marker-pin"><span>' + iconForTags(c.tags) + '</span></div></div>',
           iconSize: [26,26], iconAnchor: [13,26]
         });
-        const address = formatAddress(c.tags) || 'Address unavailable';
+        // Wikipedia-sourced candidates already carry a written summary, so
+        // there's nothing to fetch on click — show it straight away and
+        // skip the "Tell me more" button entirely.
+        const address = c.wikiExtract ? 'From Wikipedia' : (formatAddress(c.tags) || 'Address unavailable');
+        const descHtml = c.wikiExtract
+          ? '<div class="poi-popup-desc">' + escapeHtml(c.wikiExtract) + '</div>'
+          : '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
+              '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
+            '</div>';
         const popupHtml =
           '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
           '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
-          '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
-            '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
-          '</div>';
+          descHtml;
         L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
           .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 280 })
           .addTo(poiLayerGroup);

@@ -257,7 +257,13 @@ async function handleInterpret(env, body, corsHeaders) {
     model: INTERPRET_MODEL,
     system:
       "You turn a short free-text request (things a pedestrian wants to find along a walking route) into OpenStreetMap tag filters. " +
-      "Only use tag keys/values that are real, commonly-used OpenStreetMap tagging. Prefer broad, well-populated tags over obscure ones.",
+      "Only use tag keys/values that are real, commonly-used OpenStreetMap tagging. Prefer broad, well-populated tags over obscure ones. " +
+      "For a broad category rather than a specific one — e.g. 'historical sites' or 'historic buildings' rather than 'war memorials' — " +
+      "favor a wildcard match (value: '*') over a single narrow value, and cover more than one relevant OSM key as separate OR groups. " +
+      "For historical/historic requests specifically, include historic=* (this alone covers monuments, memorials, buildings, ruins, " +
+      "and archaeological sites) alongside heritage=* and tourism=museum, rather than narrowing to historic=monument alone — that " +
+      "tag is common in OpenStreetMap but only captures plaques and statues, missing the fuller range of historic sites. Only " +
+      "narrow to a specific value when the user's own request is itself specific.",
     userText: `Request: "${query}"`,
     tool: INTERPRET_TOOL,
   });
