@@ -29,6 +29,12 @@
       url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
       maxZoom: 19
+    },
+    topo: {
+      label: 'Topo',
+      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
+      attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)',
+      subdomains: 'abc', maxZoom: 17
     }
   };
 
