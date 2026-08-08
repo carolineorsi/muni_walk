@@ -96,6 +96,8 @@
   let routeBounds = null;
   let busLayerGroup = L.layerGroup().addTo(map);
   let stopLayerGroup = L.layerGroup().addTo(map);
+  // Material Symbols "directions_bus" glyph, used for live vehicle markers.
+  const BUS_ICON_SVG = '<svg viewBox="0 0 24 24"><path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM18 11H6V6h12v5z"/></svg>';
   let nearestStopLayerGroup = L.layerGroup().addTo(map);
   let poiLayerGroup = L.layerGroup().addTo(map);
 
@@ -981,8 +983,8 @@
         const dirClass = directionMatches(v.directionRef, 'O') ? 'O' : 'I';
         const icon = L.divIcon({
           className: '',
-          html: '<div class="bus-marker ' + dirClass + '">' + friendlyName(routeName) + '</div>',
-          iconSize: [22,22]
+          html: '<div class="bus-marker ' + dirClass + '" title="' + friendlyName(routeName) + '">' + BUS_ICON_SVG + '</div>',
+          iconSize: [24,24]
         });
         L.marker([v.lat, v.lon], { icon, zIndexOffset: 900 }).addTo(busLayerGroup);
       });
