@@ -224,6 +224,14 @@ async function callAnthropic(env, { model, system, messages, tools, toolChoice, 
   return res.json();
 }
 
+// web_search results occasionally include page markup (e.g. <cite> citation
+// tags) that the model copies verbatim into its generated text instead of
+// treating as formatting to discard. Strip any HTML-like tags before the
+// description reaches the client, since it's rendered as plain text.
+function stripHtmlTags(text) {
+  return String(text).replace(/<\/?[a-z][^>]*>/gi, "").trim();
+}
+
 function findToolUse(data, name) {
   return (data.content || []).find((b) => b.type === "tool_use" && b.name === name);
 }
@@ -278,7 +286,9 @@ async function handleDescribe(env, body, corsHeaders) {
     "of food or drink and the vibe; for historical or cultural sites, a bit of the history or what it's known for. Leave " +
     "out hours, payment methods, accessibility, phone numbers, and websites even if you find them. Once you've looked " +
     "into whatever you need to, call emit_descriptions exactly once with one entry for every place given. Ground each " +
-    "description in what you found or in well-established facts — never invent ratings, hours, prices, or awards.";
+    "description in what you found or in well-established facts — never invent ratings, hours, prices, or awards. Write " +
+    "plain prose only — never include HTML or wiki markup (like <cite>, <ref>, or similar tags) even if a source you " +
+    "looked up displays it that way.";
   const userText =
     `The user searched for: "${query}"\n\n` +
     `Places (JSON):\n${JSON.stringify(pointsForModel)}\n\n` +
@@ -318,7 +328,11 @@ async function handleDescribe(env, body, corsHeaders) {
   }
 
   if (!toolUse) throw new Error("Model did not return the expected tool call");
-  return jsonResponse(toolUse.input, 200, corsHeaders);
+  const descriptions = (toolUse.input.descriptions || []).map((d) => ({
+    ...d,
+    description: stripHtmlTags(d.description),
+  }));
+  return jsonResponse({ ...toolUse.input, descriptions }, 200, corsHeaders);
 }
 
 export default {
