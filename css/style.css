@@ -219,6 +219,13 @@
   .poi-popup-title{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1.2;}
   .poi-popup-address{font-size:11.5px;color:var(--muted);margin-top:4px;font-family:'Space Mono',monospace;}
   .poi-popup-desc{font-size:12.5px;margin-top:8px;line-height:1.45;}
+  .poi-tell-more-btn{
+    background:none;border:1px solid var(--line-hair);border-radius:6px;
+    color:var(--amber);font-family:'Inter';font-size:12px;font-weight:600;
+    cursor:pointer;padding:5px 10px;
+  }
+  .poi-desc-loading{color:var(--muted);font-style:italic;}
+  .poi-desc-error{color:#f0a3a3;}
 
   /* ---------- Live buses ---------- */
   .live-heading{display:flex;justify-content:space-between;align-items:center;}

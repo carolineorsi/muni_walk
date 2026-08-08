@@ -1218,11 +1218,24 @@
   // coordinates and addresses always come straight from OpenStreetMap.
   // =====================================================================
   const POI_RADIUS_METERS = 0.25 * 1609.344; // quarter mile
-  const POI_MAX_RESULTS = 20;                // cap on markers plotted / described
-  const POI_DESCRIBE_CAP = 20;               // matches the worker's own cap
+  const POI_MAX_RESULTS = 20;                // cap on markers plotted
   const PROGRESS_VISIBILITY_RADIUS_METERS = 0.5 * 1609.344; // half a mile — also used to decide the user is "on" the route for ahead-of-you filtering
 
   let poiSearchToken = 0; // bumped to invalidate stale in-flight searches
+
+  // AI descriptions are written on demand (via a "Tell me more" button in
+  // each popup) rather than for every plotted point up front — most pins a
+  // user taps into never get opened, so describing all of them eagerly
+  // burned tokens on descriptions nobody reads. These track enough state to
+  // fetch one on click: which query produced the currently-shown results,
+  // and each candidate's name/tags (describe needs both, and by the time
+  // someone clicks, `candidates` from runPoiSearch is long out of scope).
+  let poiDescribeQuery = '';
+  let poiCandidatesById = {};
+
+  function poiDescElementId(id){
+    return 'poi-desc-' + String(id).replace(/[^a-zA-Z0-9_-]/g, '-');
+  }
 
   async function fetchAIProxyJSON(action, payload){
     let res;
@@ -1396,6 +1409,7 @@
 
   function clearPoiResults(){
     poiLayerGroup.clearLayers();
+    poiCandidatesById = {};
     renderPoiResultRow(0,0);
     renderPoiStatus('');
   }
@@ -1476,32 +1490,23 @@
 
       const shown = rankCandidates(inRange).slice(0, POI_MAX_RESULTS);
 
-      renderPoiStatus('Writing descriptions…');
-      const descById = {};
-      try{
-        const describePayload = shown.slice(0, POI_DESCRIBE_CAP).map(c => ({ id: c.id, name: c.name, tags: c.tags }));
-        const descResult = await fetchAIProxyJSON('describe', { query, points: describePayload });
-        if(token !== poiSearchToken) return;
-        (descResult.descriptions || []).forEach(d => { descById[d.id] = d.description; });
-      }catch(e){
-        console.warn('[muni-walker] AI descriptions unavailable:', e);
-        // Non-fatal — points still get plotted with a generic fallback description.
-      }
-      if(token !== poiSearchToken) return;
-
       poiLayerGroup.clearLayers();
+      poiDescribeQuery = query;
+      poiCandidatesById = {};
       shown.forEach(c=>{
+        poiCandidatesById[c.id] = { name: c.name, tags: c.tags };
         const icon = L.divIcon({
           className: '',
           html: '<div class="poi-marker"><div class="poi-marker-pin"><span>' + iconForTags(c.tags) + '</span></div></div>',
           iconSize: [26,26], iconAnchor: [13,26]
         });
         const address = formatAddress(c.tags) || 'Address unavailable';
-        const desc = descById[c.id] || categoryFallbackDescription(c.tags);
         const popupHtml =
           '<div class="poi-popup-title">' + escapeHtml(c.name) + '</div>' +
           '<div class="poi-popup-address">' + escapeHtml(address) + '</div>' +
-          '<div class="poi-popup-desc">' + escapeHtml(desc) + '</div>';
+          '<div class="poi-popup-desc" id="' + poiDescElementId(c.id) + '">' +
+            '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(c.id) + '">Tell me more</button>' +
+          '</div>';
         L.marker([c.lat, c.lon], { icon, zIndexOffset: 500 })
           .bindPopup(popupHtml, { className: 'poi-popup', maxWidth: 280 })
           .addTo(poiLayerGroup);
@@ -1521,6 +1526,33 @@
   document.getElementById('poi-search-form').addEventListener('submit', (e)=>{
     e.preventDefault();
     runPoiSearch(document.getElementById('poi-search-input').value);
+  });
+
+  // Popups are appended into the map's own DOM as they open, so one
+  // delegated listener on the map container catches "Tell me more" clicks
+  // for every popup, current and future, without rebinding per-marker.
+  map.getContainer().addEventListener('click', async (e)=>{
+    const clickedBtn = e.target.closest('.poi-tell-more-btn');
+    if(!clickedBtn) return;
+
+    const id = clickedBtn.dataset.poiId;
+    const candidate = poiCandidatesById[id];
+    const container = document.getElementById(poiDescElementId(id));
+    if(!candidate || !container) return;
+
+    container.innerHTML = '<span class="poi-desc-loading">Writing description…</span>';
+    try{
+      const descResult = await fetchAIProxyJSON('describe', {
+        query: poiDescribeQuery,
+        points: [{ id, name: candidate.name, tags: candidate.tags }]
+      });
+      const entry = (descResult.descriptions || []).find(d => d.id === id);
+      container.textContent = (entry && entry.description) || categoryFallbackDescription(candidate.tags);
+    }catch(err){
+      console.warn('[muni-walker] AI description unavailable:', err);
+      container.innerHTML = '<span class="poi-desc-error">Couldn’t load a description.</span> ' +
+        '<button type="button" class="poi-tell-more-btn" data-poi-id="' + escapeHtml(id) + '">Retry</button>';
+    }
   });
 
   function getComputedColor(varName){

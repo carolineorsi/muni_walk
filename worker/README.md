@@ -7,19 +7,22 @@ things:
 1. **`interpret`** — turns a free-text request ("tacos", "historical
    sites") into OpenStreetMap tag filters. Uses Haiku (`INTERPRET_MODEL` in
    `ai-search-worker.js`) — it's a small, mechanical classification task.
-2. **`describe`** — given a batch of already-found places (name + OSM tags,
-   capped at 20), writes a richer 2-3 sentence description for each. When
-   the model isn't already confident about a place, it can use Anthropic's
-   `web_search` tool to look up real facts about it (history, specialty,
-   what it's known for) before writing the description. Also runs on Haiku
-   (`DESCRIBE_MODEL`) — the quality jump came from `web_search` actually
-   grounding the description, not from a stronger model, so it stays on the
-   cheaper tier. Bump `DESCRIBE_MODEL` to a Sonnet model id if you want to
-   try trading cost for writing quality again.
+2. **`describe`** — given already-found places (name + OSM tags; the
+   endpoint accepts a batch up to 20 but the client only ever calls it with
+   one, on demand when someone taps a pin's "Tell me more" button — not
+   preemptively for every result), writes a richer 2-3 sentence description
+   for each. When the model isn't already confident about a place, it can
+   use Anthropic's `web_search` tool to look up real facts about it
+   (history, specialty, what it's known for) before writing the
+   description. Also runs on Haiku (`DESCRIBE_MODEL`) — the quality jump
+   came from `web_search` actually grounding the description, not from a
+   stronger model, so it stays on the cheaper tier. Bump `DESCRIBE_MODEL`
+   to a Sonnet model id if you want to try trading cost for writing quality
+   again.
 
 It never returns coordinates on its own — those always come straight from
 OpenStreetMap's Overpass API, queried directly by the browser, and the
-client picks which (up to 20) places to describe before this Worker ever
+client picks which places to describe (and when) before this Worker ever
 sees them — a search never adds a new place to the results, only detail to
 ones already found. See `js/app.js` for the client-side pipeline that ties
 these together.
