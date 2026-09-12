@@ -15,3 +15,14 @@ MAX_DAILY_REQUESTS = "400"
 [[kv_namespaces]]
 binding = "RATE_LIMIT_KV"
 id = "056087de22c54c15a25da84897f11178"
+
+[observability.logs]
+enabled = true
+head_sampling_rate = 1
+invocation_logs = true
+persist = true
+
+[observability.traces]
+enabled = false
+head_sampling_rate = 1
+persist = true
