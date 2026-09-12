@@ -262,6 +262,14 @@ async function callClaude(env, { model, system, userText, tool }) {
   return toolUse.input;
 }
 
+async function fetchRouteShapeRows(routeName, filterFull) {
+  const url = ROUTE_SHAPES_ENDPOINT + "?route_name=" + encodeURIComponent(routeName) +
+    (filterFull ? "&pattern_type=F" : "") + "&$limit=50";
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`SFMTA feed error ${res.status}`);
+  return res.json();
+}
+
 // Passes through SFMTA's public route-shapes dataset server-side, since
 // data.sfgov.org doesn't reliably send CORS headers the browser will
 // accept. No Anthropic key or rate-limit budget involved — it's a plain
@@ -270,10 +278,13 @@ async function handleRouteShapes(body, corsHeaders) {
   const routeName = String(body.routeName || "").trim().slice(0, 10);
   if (!routeName) return jsonResponse({ error: "Missing 'routeName'" }, 400, corsHeaders);
 
-  const url = ROUTE_SHAPES_ENDPOINT + "?route_name=" + encodeURIComponent(routeName) + "&pattern_type=F&$limit=50";
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`SFMTA feed error ${res.status}`);
-  const rows = await res.json();
+  // pattern_type=F ("full length pattern") is what the dataset's own docs
+  // call the standard case, but a handful of routes (rail-replacement
+  // shuttles, tripper-only services like 714) apparently aren't tagged that
+  // way and come back with zero rows under that filter even though SFMTA
+  // still publishes a shape for them. Retry once without it before giving up.
+  let rows = await fetchRouteShapeRows(routeName, true);
+  if (!rows.length) rows = await fetchRouteShapeRows(routeName, false);
 
   const seenDir = {};
   const shapes = {};
