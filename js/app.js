@@ -5,51 +5,82 @@
   const map = L.map('map', {zoomControl:false, attributionControl:true}).setView([37.7749,-122.4194], 13);
   L.control.zoom({position:'bottomleft'}).addTo(map);
 
+  // CARTO's anonymous "Basemaps" tiles (basemaps.cartocdn.com) now serve an
+  // "API KEY REQUIRED" watermark once the shared free-tier quota runs out,
+  // which happens globally for unregistered apps — not just for us. Esri's
+  // Light/Dark Gray Canvas basemaps are a keyless equivalent: like the
+  // World_Imagery service already used for "satellite" below, they're free
+  // or ArcGIS Online with no account or key needed. Each ships as two
+  // layers — a "Base" (fill/roads) and a "Reference" (labels) — that stack
+  // together to match what a single CARTO tile used to provide.
+  const ESRI_CANVAS_ATTRIBUTION = 'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS User Community';
   const BASEMAPS = {
     dark: {
       label: 'Dark',
-      url: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      subdomains: 'abcd', maxZoom: 20
+      attribution: ESRI_CANVAS_ATTRIBUTION,
+      layers: [
+        { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', maxNativeZoom: 16 },
+        { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}', maxNativeZoom: 16 }
+      ],
+      maxZoom: 19
     },
     light: {
       label: 'Light',
-      url: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-      attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
-      subdomains: 'abcd', maxZoom: 20
+      attribution: ESRI_CANVAS_ATTRIBUTION,
+      layers: [
+        { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', maxNativeZoom: 16 },
+        { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', maxNativeZoom: 16 }
+      ],
+      maxZoom: 19
     },
     streets: {
       label: 'Streets',
-      url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
       attribution: '&copy; OpenStreetMap contributors',
-      subdomains: 'abc', maxZoom: 19
+      layers: [
+        { url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', subdomains: 'abc' }
+      ],
+      maxZoom: 19
     },
     satellite: {
       label: 'Satellite',
-      url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
       attribution: 'Tiles &copy; Esri — Source: Esri, Maxar, Earthstar Geographics',
+      layers: [
+        { url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}' }
+      ],
       maxZoom: 19
     },
     topo: {
       label: 'Topo',
-      url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',
       attribution: 'Map data: &copy; OpenStreetMap contributors, SRTM | Map style: &copy; OpenTopoMap (CC-BY-SA)',
-      subdomains: 'abc', maxZoom: 17
+      layers: [
+        { url: 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', subdomains: 'abc' }
+      ],
+      maxZoom: 17
     }
   };
 
   let currentBasemapLayer = null;
   function setBasemap(key){
     const cfg = BASEMAPS[key] ? BASEMAPS[key] : BASEMAPS.dark;
-    const tileOptions = { attribution: cfg.attribution, maxZoom: cfg.maxZoom };
-    if(cfg.subdomains) tileOptions.subdomains = cfg.subdomains; // omit entirely if unset, rather than passing undefined
-
     const oldLayer = currentBasemapLayer;
-    const newLayer = L.tileLayer(cfg.url, tileOptions);
+
+    const tileLayers = cfg.layers.map(layerCfg=>{
+      const tileOptions = { attribution: cfg.attribution, maxZoom: cfg.maxZoom };
+      if(layerCfg.maxNativeZoom) tileOptions.maxNativeZoom = layerCfg.maxNativeZoom;
+      const subdomains = layerCfg.subdomains || cfg.subdomains;
+      if(subdomains) tileOptions.subdomains = subdomains; // omit entirely if unset, rather than passing undefined
+      return L.tileLayer(layerCfg.url, tileOptions);
+    });
+
+    const newLayer = L.layerGroup(tileLayers);
     currentBasemapLayer = newLayer;
 
     newLayer.addTo(map);
-    newLayer.bringToBack();
+    // Push the new tile layers behind everything already on the map (the
+    // old basemap included), processing them back-to-front so their
+    // relative order — e.g. a "reference" labels layer above its "base" —
+    // is preserved once they're both beneath the old layer.
+    [...tileLayers].reverse().forEach(l=>l.bringToBack());
 
     // Don't remove the previous layer until the new one has actually
     // finished loading its tiles (falling back to a timeout if 'load'
@@ -66,7 +97,8 @@
         cleaned = true;
         if(map.hasLayer(oldLayer)) map.removeLayer(oldLayer);
       };
-      newLayer.once('load', cleanupOld);
+      let pending = tileLayers.length;
+      tileLayers.forEach(l=>l.once('load', ()=>{ pending--; if(pending<=0) cleanupOld(); }));
       setTimeout(cleanupOld, 2500);
     }
 
