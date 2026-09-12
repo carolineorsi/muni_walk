@@ -161,7 +161,11 @@
     "T":"Third Street"
   };
 
-  const DATA_BASE = "https://data.sfgov.org/resource/9exe-acju.json";
+  // data.sfgov.org's SODA API doesn't reliably send a browser-usable
+  // Access-Control-Allow-Origin header — under load/rate-limiting it can
+  // send one that doesn't match this app's origin, which the browser then
+  // blocks outright. Fetching it is proxied through AI_PROXY_BASE below
+  // (server-to-server, so no CORS involved) instead of calling it directly.
 
   // Cloudflare Worker proxy that holds the 511.org API key server-side.
   // See the muni-511-proxy project for the Worker source.
@@ -330,22 +334,13 @@
       return;
     }
 
-    // Otherwise, try the live SFMTA feed.
+    // Otherwise, ask the Worker to fetch the live SFMTA feed server-side
+    // (see the DATA_BASE comment above for why this can't be a direct
+    // browser fetch to data.sfgov.org).
     try{
-      const url = DATA_BASE + "?route_name=" + encodeURIComponent(routeName) + "&pattern_type=F&$limit=50";
-      const res = await fetch(url);
-      if(!res.ok) throw new Error('bad status '+res.status);
-      const rows = await res.json();
-      if(!rows.length) throw new Error('no shapes returned for this route');
-
-      const seenDir = {};
-      const shapes = {};
-      rows.forEach(row=>{
-        const dir = row.direction; // 'I' or 'O'
-        if(seenDir[dir]) return; // keep first full pattern per direction to avoid overlapping dupes
-        seenDir[dir] = true;
-        shapes[dir] = row.shape;
-      });
+      const data = await fetchAIProxyJSON('routeShapes', { routeName });
+      const shapes = data.shapes || {};
+      if(!Object.keys(shapes).length) throw new Error('no shapes returned for this route');
 
       drawRouteFromShapes(routeName, shapes);
       refreshLiveBuses();
