@@ -1,8 +1,9 @@
 # muni-walk-ai-search — Cloudflare Worker
 
-Backs the "Find ___ along the route" feature in the main app. Holds the
-Anthropic API key server-side (never in browser JS) and does exactly two
-things:
+Backs the "Find ___ along the route" feature in the main app, and also
+proxies one unrelated endpoint for the route picker (see `routeShapes`
+below). Holds the Anthropic API key server-side (never in browser JS) and
+does exactly three things:
 
 1. **`interpret`** — turns a free-text request ("tacos", "historical
    sites") into OpenStreetMap tag filters. Uses Haiku (`INTERPRET_MODEL` in
@@ -19,6 +20,15 @@ things:
    stronger model, so it stays on the cheaper tier. Bump `DESCRIBE_MODEL`
    to a Sonnet model id if you want to try trading cost for writing quality
    again.
+3. **`routeShapes`** — a third, unrelated endpoint that hitches a ride on
+   this same Worker: it fetches SFMTA's public route-shapes dataset
+   (`data.sfgov.org`) server-side and passes the result straight through,
+   for routes not in the app's embedded fallback set. data.sfgov.org
+   doesn't reliably send a browser-usable `Access-Control-Allow-Origin`
+   header, so a direct `fetch()` from the app can fail with a CORS error
+   even though the data itself is available; a server-to-server request
+   isn't subject to CORS at all. It doesn't touch Anthropic or the rate
+   limit/KV — see `handleRouteShapes` in `ai-search-worker.js`.
 
 It never returns coordinates on its own — those always come straight from
 OpenStreetMap's Overpass API, queried directly by the browser, and the
@@ -107,8 +117,9 @@ code and `wrangler.toml`'s `[vars]`/`[[kv_namespaces]]` binding.
 
 ## API
 
-Both endpoints are `POST` with a JSON body. CORS is restricted to origins
-listed in `ALLOWED_ORIGINS`, and every request is rate-limited (see above).
+All endpoints are `POST` with a JSON body. CORS is restricted to origins
+listed in `ALLOWED_ORIGINS`. `interpret` and `describe` are rate-limited
+(see above); `routeShapes` isn't — it doesn't touch Anthropic.
 
 ```
 POST /
@@ -126,4 +137,11 @@ POST /
 ->
 { "descriptions": [{"id":"node/123","description":"A Mission District institution since 1973, La Taqueria is famous for
   its no-rice burritos wrapped in foil and grilled — often cited as some of the best in the city."}] }
+```
+
+```
+POST /
+{ "action": "routeShapes", "routeName": "33" }
+->
+{ "shapes": { "I": "MULTILINESTRING ((...))", "O": "MULTILINESTRING ((...))" } }
 ```

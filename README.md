@@ -36,7 +36,10 @@ The app is a static site — no build step, no backend of its own.
 
 - Map rendering uses [Leaflet](https://leafletjs.com/).
 - Route shapes come from SFMTA's open data (`data.sfgov.org`), with an
-  embedded fallback copy baked into the app.
+  embedded fallback copy baked into the app. Routes not in that embedded
+  set are fetched through the Cloudflare Worker (`worker/`) rather than
+  directly from the browser, since `data.sfgov.org` doesn't reliably send
+  a CORS header the browser will accept.
 - Live vehicle positions and stop arrival predictions come from
   [511.org](https://511.org)'s Transit API, proxied through a small
   Cloudflare Worker that keeps the API key server-side.
