@@ -132,6 +132,69 @@
   const BUS_ICON_SVG = '<svg viewBox="0 0 24 24"><path d="M4 16c0 .88.39 1.67 1 2.22V20c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1h8v1c0 .55.45 1 1 1h1c.55 0 1-.45 1-1v-1.78c.61-.55 1-1.34 1-2.22V6c0-3.5-3.58-4-8-4s-8 .5-8 4v10zm3.5 1c-.83 0-1.5-.67-1.5-1.5S6.67 14 7.5 14s1.5.67 1.5 1.5S8.33 17 7.5 17zm9 0c-.83 0-1.5-.67-1.5-1.5s.67-1.5 1.5-1.5 1.5.67 1.5 1.5-.67 1.5-1.5 1.5zM18 11H6V6h12v5z"/></svg>';
   let nearestStopLayerGroup = L.layerGroup().addTo(map);
   let poiLayerGroup = L.layerGroup().addTo(map);
+  let bingoLayerGroup = L.layerGroup(); // not added to map by default — toggled via the Layers panel
+  const BINGO_MARKER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>';
+
+  // ---------- Optional map layers ----------
+  // Each entry owns a Leaflet layer group built once up front; toggling a
+  // layer on/off in the Layers panel just adds/removes that group from the
+  // map, independent of whatever route (if any) is currently selected.
+  BINGO_LOCATIONS.forEach(loc=>{
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="bingo-marker-pin">' + BINGO_MARKER_SVG + '</div>',
+      iconSize: [22,22],
+      iconAnchor: [11,22]
+    });
+    L.marker([loc.lat, loc.lon], { icon })
+      .bindPopup(
+        '<div class="bingo-popup-tag">Bussin’ Bingo</div><div class="bingo-popup-title">' + escapeHtml(loc.name) + '</div>',
+        { className: 'bingo-popup' }
+      )
+      .addTo(bingoLayerGroup);
+  });
+
+  const LAYERS = [
+    { id: 'bingo', label: "Muni's Bussin' Bingo", group: bingoLayerGroup, defaultVisible: false }
+  ];
+
+  function setLayerVisible(layer, on, persist){
+    if(on){ layer.group.addTo(map); } else { map.removeLayer(layer.group); }
+    const toggle = document.getElementById('layer-toggle-' + layer.id);
+    if(toggle) toggle.classList.toggle('on', on);
+    if(persist !== false) persistLayerVisibility();
+  }
+
+  async function persistLayerVisibility(){
+    const visibility = {};
+    LAYERS.forEach(layer => { visibility[layer.id] = map.hasLayer(layer.group); });
+    try{ await window.storage.set('layer-visibility', visibility); }catch(e){ /* non-fatal — just won't persist */ }
+  }
+
+  async function initLayers(){
+    const list = document.getElementById('layers-list');
+    list.innerHTML = '';
+    LAYERS.forEach(layer=>{
+      const row = document.createElement('div');
+      row.className = 'layer-row';
+      row.innerHTML = '<span class="layer-row-label">' + escapeHtml(layer.label) + '</span>' +
+        '<div class="layer-toggle" id="layer-toggle-' + layer.id + '" title="Toggle ' + escapeHtml(layer.label) + '"><div class="knob"></div></div>';
+      row.querySelector('.layer-toggle').addEventListener('click', ()=>{
+        setLayerVisible(layer, !map.hasLayer(layer.group));
+      });
+      list.appendChild(row);
+    });
+
+    let saved = null;
+    try{ saved = await window.storage.get('layer-visibility'); }catch(e){ /* no saved preference yet, or storage unavailable — use defaults */ }
+    const visibility = (saved && saved.value) || {};
+    LAYERS.forEach(layer=>{
+      const on = layer.id in visibility ? !!visibility[layer.id] : layer.defaultVisible;
+      setLayerVisible(layer, on, false);
+    });
+  }
+
+  initLayers();
 
   // ---------- Fallback route list (used only if the live route list fails to load) ----------
   const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
@@ -345,6 +408,7 @@
     document.getElementById('live-fab-btn').classList.remove('visible');
     closeSidePanel(document.getElementById('search-card'), document.getElementById('search-fab-btn'));
     closeSidePanel(document.getElementById('live-card'), document.getElementById('live-fab-btn'));
+    closeSidePanel(document.getElementById('layers-card'), document.getElementById('layers-fab-btn'));
     document.getElementById('empty-hint').classList.add('hidden');
     document.getElementById('progress-block').classList.remove('visible');
     document.getElementById('direction-toggle').innerHTML = '';
@@ -2066,15 +2130,22 @@
   // the two side panels are mutually exclusive since there's only room for one at a time.
   const searchCard = document.getElementById('search-card');
   const liveCard = document.getElementById('live-card');
+  const layersCard = document.getElementById('layers-card');
   const searchFabBtn = document.getElementById('search-fab-btn');
   const liveFabBtn = document.getElementById('live-fab-btn');
+  const layersFabBtn = document.getElementById('layers-fab-btn');
+  const sidePanels = [
+    { panel: searchCard, fabBtn: searchFabBtn },
+    { panel: liveCard, fabBtn: liveFabBtn },
+    { panel: layersCard, fabBtn: layersFabBtn }
+  ];
 
   function closeSidePanel(panel, fabBtn){
     panel.classList.remove('visible');
     fabBtn.classList.remove('active');
   }
-  function openSidePanel(panel, fabBtn, otherPanel, otherFabBtn){
-    closeSidePanel(otherPanel, otherFabBtn);
+  function openSidePanel(panel, fabBtn){
+    sidePanels.forEach(sp => { if(sp.panel !== panel) closeSidePanel(sp.panel, sp.fabBtn); });
     panel.classList.add('visible');
     fabBtn.classList.add('active');
     infoCard.classList.add('collapsed');
@@ -2085,7 +2156,7 @@
     if(searchCard.classList.contains('visible')){
       closeSidePanel(searchCard, searchFabBtn);
     }else{
-      openSidePanel(searchCard, searchFabBtn, liveCard, liveFabBtn);
+      openSidePanel(searchCard, searchFabBtn);
       document.getElementById('poi-search-input').focus();
     }
   });
@@ -2093,19 +2164,28 @@
     if(liveCard.classList.contains('visible')){
       closeSidePanel(liveCard, liveFabBtn);
     }else{
-      openSidePanel(liveCard, liveFabBtn, searchCard, searchFabBtn);
+      openSidePanel(liveCard, liveFabBtn);
+    }
+  });
+  layersFabBtn.addEventListener('click', ()=>{
+    if(layersCard.classList.contains('visible')){
+      closeSidePanel(layersCard, layersFabBtn);
+    }else{
+      openSidePanel(layersCard, layersFabBtn);
     }
   });
   document.getElementById('search-close-btn').addEventListener('click', ()=> closeSidePanel(searchCard, searchFabBtn));
   document.getElementById('live-close-btn').addEventListener('click', ()=> closeSidePanel(liveCard, liveFabBtn));
+  document.getElementById('layers-close-btn').addEventListener('click', ()=> closeSidePanel(layersCard, layersFabBtn));
 
   function positionHeadsignOffsets(){
     const hs = document.getElementById('headsign');
     const h = hs.getBoundingClientRect().height;
     document.getElementById('basemap-select').style.top = (h + 14) + 'px';
     locateBtn.style.top = (h + 14 + 38 + 10) + 'px';
-    searchFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10) + 'px';
-    liveFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10 + 48 + 10) + 'px';
+    layersFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10) + 'px';
+    searchFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10 + 48 + 10) + 'px';
+    liveFabBtn.style.top = (h + 14 + 38 + 10 + 48 + 10 + 48 + 10 + 48 + 10) + 'px';
     document.getElementById('error-toast').style.top = (h + 14) + 'px';
     document.getElementById('empty-hint').style.top = (h + 14) + 'px';
   }

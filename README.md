@@ -29,6 +29,10 @@ GPS position against it, and shows live buses running that route.
   category.
 - **Basemap switcher** — choose between dark, light, streets, and satellite
   map styles.
+- **Map layers** — toggle optional point layers on/off from the Layers
+  panel, independent of the selected route. Currently includes Muni's
+  Bussin' Bingo, the participating local-business locations for SFMTA's
+  Transit Month bingo card (sfmta.com/Bingo).
 
 ## How it works
 
@@ -82,6 +86,7 @@ The app is a static site — no build step, no backend of its own.
 index.html                  Page markup
 css/style.css                All styles
 js/routes-data.js            Embedded fallback route geometry
+js/layers-data.js            Data for optional map layers (e.g. Bingo locations)
 js/app.js                    App logic (map, GPS, live buses, POI search, UI)
 worker/ai-search-worker.js   Cloudflare Worker for the "Find along the route" AI proxy
 worker/wrangler.toml         Worker deploy config
