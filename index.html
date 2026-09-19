@@ -58,6 +58,14 @@
     </svg>
   </button>
 
+  <button id="layers-fab-btn" class="fab-btn visible" title="Map layers" aria-label="Map layers">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <polygon points="12 2 2 8 12 14 22 8 12 2"></polygon>
+      <polyline points="2 14 12 20 22 14"></polyline>
+      <polyline points="2 11 12 17 22 11"></polyline>
+    </svg>
+  </button>
+
   <div id="panel-stack">
     <div id="info-card" class="floating-panel">
       <div class="info-row">
@@ -133,6 +141,20 @@
       </div>
     </div>
 
+    <div id="layers-card" class="floating-panel">
+      <div class="info-row">
+        <div class="info-title">Map layers</div>
+        <button id="layers-close-btn" class="panel-close-btn" title="Close" aria-label="Close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="panel-body">
+        <div id="layers-list"></div>
+      </div>
+    </div>
+
     <div id="live-card" class="floating-panel">
       <div class="info-row">
         <div class="info-title">Live buses</div>
@@ -167,6 +189,7 @@
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script src="js/routes-data.js"></script>
+<script src="js/layers-data.js"></script>
 <script src="js/app.js"></script>
 </body>
 </html>
