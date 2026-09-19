@@ -141,37 +141,123 @@
   // Each entry owns a Leaflet layer group built once up front; toggling a
   // layer on/off in the Layers panel just adds/removes that group from the
   // map, independent of whatever route (if any) is currently selected.
-  BINGO_LOCATIONS.forEach(loc=>{
+
+  // Weekly hours (see js/layers-data.js) are static data, computed against
+  // "now" only when needed: once per marker at layer-build time (to color
+  // the pin) and again fresh each time a popup opens (so the status shown
+  // is never more than a few minutes stale even in a long-lived tab).
+  const HOURS_DAY_KEYS = ['sun','mon','tue','wed','thu','fri','sat'];
+
+  function nowInLA(){
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(new Date());
+    const map = {};
+    parts.forEach(p=>{ map[p.type] = p.value; });
+    let hour = parseInt(map.hour, 10);
+    if(hour === 24) hour = 0; // some ICU implementations give "24" for midnight with hour12:false
+    const dayIndex = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].indexOf(map.weekday);
+    return { day: HOURS_DAY_KEYS[dayIndex < 0 ? 0 : dayIndex], minutes: hour * 60 + parseInt(map.minute, 10) };
+  }
+
+  function timeToMinutes(hhmm){
+    const parts = hhmm.split(':');
+    return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+  }
+
+  // Returns true/false for open/closed, or null if no hours data exists.
+  function isLocationOpen(hours){
+    if(!hours) return null;
+    const { day, minutes } = nowInLA();
+    const span = hours[day];
+    if(!span) return false;
+    const openMin = timeToMinutes(span[0]);
+    const closeMin = timeToMinutes(span[1]);
+    return closeMin > openMin
+      ? (minutes >= openMin && minutes < closeMin)
+      : (minutes >= openMin || minutes < closeMin); // crosses midnight
+  }
+
+  function formatClockTime(hhmm){
+    const parts = hhmm.split(':');
+    let h = parseInt(parts[0], 10) % 24;
+    const m = parseInt(parts[1], 10);
+    const ampm = h >= 12 ? 'pm' : 'am';
+    h = h % 12; if(h === 0) h = 12;
+    return m === 0 ? (h + ampm) : (h + ':' + String(m).padStart(2,'0') + ampm);
+  }
+
+  // Condenses the 7-day hours object into a short list of lines, merging
+  // consecutive days that share identical hours (e.g. "Mon–Fri: 7am–3pm").
+  function formatHoursLines(hours){
+    const dayLabels = { mon:'Mon', tue:'Tue', wed:'Wed', thu:'Thu', fri:'Fri', sat:'Sat', sun:'Sun' };
+    const order = ['mon','tue','wed','thu','fri','sat','sun'];
+    const spanLabel = day => hours[day] ? formatClockTime(hours[day][0]) + '–' + formatClockTime(hours[day][1]) : 'Closed';
+    const lines = [];
+    let i = 0;
+    while(i < order.length){
+      const label = spanLabel(order[i]);
+      let j = i;
+      while(j + 1 < order.length && spanLabel(order[j+1]) === label) j++;
+      const dayLabel = i === j ? dayLabels[order[i]] : dayLabels[order[i]] + '–' + dayLabels[order[j]];
+      lines.push(dayLabel + ': ' + label);
+      i = j + 1;
+    }
+    return lines;
+  }
+
+  function buildBingoPopupHtml(loc, isLibrary){
+    let html = isLibrary
+      ? '<div class="bingo-popup-tag library-popup-tag">SF Public Library</div>'
+      : '<div class="bingo-popup-tag">Bussin’ Bingo</div>';
+    html += '<div class="bingo-popup-title">' + escapeHtml(loc.name) + '</div>';
+    if(loc.hours){
+      const open = isLocationOpen(loc.hours);
+      html += '<div class="bingo-popup-status ' + (open ? 'is-open' : 'is-closed') + '">' + (open ? 'Open now' : 'Closed now') + '</div>';
+      html += '<div class="bingo-popup-hours">' + formatHoursLines(loc.hours).map(l => '<div>' + escapeHtml(l) + '</div>').join('') + '</div>';
+      if(loc.hoursUnconfirmed){
+        html += '<div class="bingo-popup-hours-note">Hours unconfirmed — please verify</div>';
+      }
+    } else {
+      html += '<div class="bingo-popup-hours-note">Hours not available</div>';
+    }
+    return html;
+  }
+
+  const bingoMarkers = []; // { marker, hours } — kept to refresh pin color as time passes
+
+  function addBingoMarker(loc, isLibrary){
     const icon = L.divIcon({
       className: '',
-      html: '<div class="bingo-marker-pin">' + BINGO_MARKER_SVG + '</div>',
+      html: '<div class="bingo-marker-pin' + (isLibrary ? ' library-marker-pin' : '') + '">' + (isLibrary ? LIBRARY_MARKER_SVG : BINGO_MARKER_SVG) + '</div>',
       iconSize: [22,22],
       iconAnchor: [11,22]
     });
-    L.marker([loc.lat, loc.lon], { icon })
-      .bindPopup(
-        '<div class="bingo-popup-tag">Bussin’ Bingo</div><div class="bingo-popup-title">' + escapeHtml(loc.name) + '</div>',
-        { className: 'bingo-popup' }
-      )
-      .addTo(bingoLayerGroup);
-  });
+    const marker = L.marker([loc.lat, loc.lon], { icon });
+    marker.bindPopup(() => buildBingoPopupHtml(loc, isLibrary), { className: 'bingo-popup' });
+    marker.addTo(bingoLayerGroup);
+    bingoMarkers.push({ marker, hours: loc.hours });
+  }
+
+  BINGO_LOCATIONS.forEach(loc => addBingoMarker(loc, false));
 
   // SF Public Library branches ride the same layer, distinguished by a
   // lighter-purple marker and a "library" icon instead of a bingo stamp.
-  LIBRARY_LOCATIONS.forEach(loc=>{
-    const icon = L.divIcon({
-      className: '',
-      html: '<div class="bingo-marker-pin library-marker-pin">' + LIBRARY_MARKER_SVG + '</div>',
-      iconSize: [22,22],
-      iconAnchor: [11,22]
+  LIBRARY_LOCATIONS.forEach(loc => addBingoMarker(loc, true));
+
+  function refreshBingoMarkerOpenState(){
+    bingoMarkers.forEach(({ marker, hours }) => {
+      const el = marker.getElement && marker.getElement();
+      if(!el) return;
+      const pin = el.querySelector('.bingo-marker-pin');
+      if(!pin) return;
+      pin.classList.toggle('closed', isLocationOpen(hours) === false);
     });
-    L.marker([loc.lat, loc.lon], { icon })
-      .bindPopup(
-        '<div class="bingo-popup-tag library-popup-tag">SF Public Library</div><div class="bingo-popup-title">' + escapeHtml(loc.name) + '</div>',
-        { className: 'bingo-popup' }
-      )
-      .addTo(bingoLayerGroup);
-  });
+  }
+
+  refreshBingoMarkerOpenState();
+  setInterval(refreshBingoMarkerOpenState, 5 * 60 * 1000);
 
   const LAYERS = [
     { id: 'bingo', label: "Muni's Bussin' Bingo", group: bingoLayerGroup, defaultVisible: false }
@@ -179,6 +265,7 @@
 
   function setLayerVisible(layer, on, persist){
     if(on){ layer.group.addTo(map); } else { map.removeLayer(layer.group); }
+    if(on && layer.id === 'bingo') refreshBingoMarkerOpenState(); // marker DOM only exists once added to the map
     const toggle = document.getElementById('layer-toggle-' + layer.id);
     if(toggle) toggle.classList.toggle('on', on);
     if(persist !== false) persistLayerVisibility();
