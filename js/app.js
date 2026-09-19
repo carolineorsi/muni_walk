@@ -134,6 +134,8 @@
   let poiLayerGroup = L.layerGroup().addTo(map);
   let bingoLayerGroup = L.layerGroup(); // not added to map by default — toggled via the Layers panel
   const BINGO_MARKER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect></svg>';
+  // Material Symbols "local_library" glyph, used for SF Public Library markers.
+  const LIBRARY_MARKER_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>';
 
   // ---------- Optional map layers ----------
   // Each entry owns a Leaflet layer group built once up front; toggling a
@@ -149,6 +151,23 @@
     L.marker([loc.lat, loc.lon], { icon })
       .bindPopup(
         '<div class="bingo-popup-tag">Bussin’ Bingo</div><div class="bingo-popup-title">' + escapeHtml(loc.name) + '</div>',
+        { className: 'bingo-popup' }
+      )
+      .addTo(bingoLayerGroup);
+  });
+
+  // SF Public Library branches ride the same layer, distinguished by a
+  // lighter-purple marker and a "library" icon instead of a bingo stamp.
+  LIBRARY_LOCATIONS.forEach(loc=>{
+    const icon = L.divIcon({
+      className: '',
+      html: '<div class="bingo-marker-pin library-marker-pin">' + LIBRARY_MARKER_SVG + '</div>',
+      iconSize: [22,22],
+      iconAnchor: [11,22]
+    });
+    L.marker([loc.lat, loc.lon], { icon })
+      .bindPopup(
+        '<div class="bingo-popup-tag library-popup-tag">SF Public Library</div><div class="bingo-popup-title">' + escapeHtml(loc.name) + '</div>',
         { className: 'bingo-popup' }
       )
       .addTo(bingoLayerGroup);
