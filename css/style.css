@@ -11,6 +11,7 @@
     --outbound:#EF5B4E;
     --good:#4FD1A5;
     --bingo:#C77DFF;
+    --bingo-light:#E0AAFF;
   }
   *{box-sizing:border-box;}
   html,body{height:100%;margin:0;background:var(--charcoal);font-family:'Inter',sans-serif;color:var(--paper);overflow:hidden;}
@@ -281,6 +282,7 @@
     display:flex;align-items:center;justify-content:center;
   }
   .bingo-marker-pin svg{width:11px;height:11px;transform:rotate(45deg);stroke:#1a1204;}
+  .library-marker-pin{background:var(--bingo-light);}
   .bingo-popup .leaflet-popup-content-wrapper{
     background:var(--panel);color:var(--paper);
     border:1px solid var(--line-hair);border-radius:10px;
@@ -289,6 +291,7 @@
   .bingo-popup .leaflet-popup-content{margin:12px 14px;min-width:160px;}
   .bingo-popup-title{font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:17px;line-height:1.2;}
   .bingo-popup-tag{font-size:11px;color:var(--bingo);margin-top:3px;font-family:'Inter';font-weight:600;letter-spacing:.3px;text-transform:uppercase;}
+  .library-popup-tag{color:var(--bingo-light);}
 
   /* ---------- Live buses ---------- */
   .live-heading{display:flex;justify-content:space-between;align-items:center;}
