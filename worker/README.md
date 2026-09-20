@@ -1,9 +1,8 @@
 # muni-walk-ai-search — Cloudflare Worker
 
-Backs the "Find ___ along the route" feature in the main app, and also
-proxies one unrelated endpoint for the route picker (see `routeShapes`
-below). Holds the Anthropic API key server-side (never in browser JS) and
-does exactly three things:
+Backs the "Find ___ along the route" feature in the main app. Holds the
+Anthropic API key server-side (never in browser JS) and does exactly two
+things:
 
 1. **`interpret`** — turns a free-text request ("tacos", "historical
    sites") into OpenStreetMap tag filters. Uses Haiku (`INTERPRET_MODEL` in
@@ -20,15 +19,10 @@ does exactly three things:
    stronger model, so it stays on the cheaper tier. Bump `DESCRIBE_MODEL`
    to a Sonnet model id if you want to try trading cost for writing quality
    again.
-3. **`routeShapes`** — a third, unrelated endpoint that hitches a ride on
-   this same Worker: it fetches SFMTA's public route-shapes dataset
-   (`data.sfgov.org`) server-side and passes the result straight through,
-   for routes not in the app's embedded fallback set. data.sfgov.org
-   doesn't reliably send a browser-usable `Access-Control-Allow-Origin`
-   header, so a direct `fetch()` from the app can fail with a CORS error
-   even though the data itself is available; a server-to-server request
-   isn't subject to CORS at all. It doesn't touch Anthropic or the rate
-   limit/KV — see `handleRouteShapes` in `ai-search-worker.js`.
+
+Route shapes for the route picker are hard-coded in `js/routes-data.js`
+(regenerated with `scripts/fetch-routes-data.mjs`) rather than fetched at
+runtime, so this Worker no longer proxies that dataset.
 
 It never returns coordinates on its own — those always come straight from
 OpenStreetMap's Overpass API, queried directly by the browser, and the
