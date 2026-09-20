@@ -25,12 +25,27 @@ const ROUTES = [
   "TBUS",
 ];
 
+const RATE_LIMIT_STATUSES = new Set([425, 429]);
+const REQUEST_SPACING_MS = 600; // data.sfgov.org throttles bursts (425/429) with no app token
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function fetchRouteShapeRows(routeName, filterFull) {
   const url = ROUTE_SHAPES_ENDPOINT + "?route_name=" + encodeURIComponent(routeName) +
     (filterFull ? "&pattern_type=F" : "") + "&$limit=50";
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`SFMTA feed error ${res.status} for route ${routeName}`);
-  return res.json();
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    if (attempt > 0) await sleep(REQUEST_SPACING_MS * 2 ** attempt);
+    const res = await fetch(url);
+    if (res.ok) return res.json();
+    if (!RATE_LIMIT_STATUSES.has(res.status)) {
+      throw new Error(`SFMTA feed error ${res.status} for route ${routeName}`);
+    }
+    console.error(`[fetch-routes-data] ${routeName}: rate-limited (${res.status}), retrying...`);
+  }
+  throw new Error(`SFMTA feed still rate-limited for route ${routeName} after retries`);
 }
 
 async function fetchShapesForRoute(routeName) {
@@ -64,6 +79,7 @@ async function main() {
   const missing = [];
 
   for (const routeName of ROUTES) {
+    if (entries.length + missing.length > 0) await sleep(REQUEST_SPACING_MS);
     let shapes;
     try {
       shapes = await fetchShapesForRoute(routeName);
