@@ -302,9 +302,6 @@
 
   initLayers();
 
-  // ---------- Fallback route list (used only if the live route list fails to load) ----------
-  const FALLBACK_ROUTES = ["1","1X","2","3","5","5R","6","7","7X","8","8AX","8BX","9","9R","10","12","14","14R","14X","15","18","19","21","22","23","24","25","27","28","28R","29","30","31","33","35","36","37","38","38R","39","43","44","45","48","49","52","54","55","56","57","58","66","67","714","J","KBUS","L","M","MBUS","N","NBUS","T","TBUS"];
-
   // ---------- Route names ----------
   // Maps a route's base code (after stripping the trailing "BUS" used for
   // rail-replacement shapes) to its public display name, e.g. "1" -> "California".
@@ -361,12 +358,6 @@
     "N":"Judah",
     "T":"Third Street"
   };
-
-  // data.sfgov.org's SODA API doesn't reliably send a browser-usable
-  // Access-Control-Allow-Origin header — under load/rate-limiting it can
-  // send one that doesn't match this app's origin, which the browser then
-  // blocks outright. Fetching it is proxied through AI_PROXY_BASE below
-  // (server-to-server, so no CORS involved) instead of calling it directly.
 
   // Cloudflare Worker proxy that holds the 511.org API key server-side.
   // See the muni-511-proxy project for the Worker source.
@@ -440,15 +431,7 @@
   }
 
   function loadRouteList(){
-    // Show the full curated route list immediately and leave it alone from
-    // here on. (Earlier versions re-populated this list in the background
-    // after a live fetch resolved, which could rebuild the <select> options
-    // out from under an in-progress tap/click and select the wrong line —
-    // e.g. tapping "44" but landing on "43" because the list shifted. The
-    // curated list below already covers every current Muni line, so there's
-    // no need to mutate the dropdown again after this.)
-    const baseList = Array.from(new Set([...EMBEDDED_ROUTE_NAMES, ...FALLBACK_ROUTES]));
-    fillSelect(baseList);
+    fillSelect(EMBEDDED_ROUTE_NAMES);
   }
 
   // ---------- WKT / GeoJSON shape parsing ----------
@@ -492,7 +475,7 @@
   let currentRouteName = null;
 
   // ---------- Load + draw route ----------
-  async function loadRoute(routeName){
+  function loadRoute(routeName){
     routeLayerGroup.clearLayers();
     busLayerGroup.clearLayers();
     stopLayerGroup.clearLayers();
@@ -529,27 +512,13 @@
     badge.textContent = friendlyName(routeName);
     badge.classList.remove('empty');
 
-    // Prefer the embedded, always-available shapes for this route.
-    if(EMBEDDED_ROUTES[routeName]){
-      drawRouteFromShapes(routeName, EMBEDDED_ROUTES[routeName]);
-      refreshLiveBuses();
+    if(!EMBEDDED_ROUTES[routeName]){
+      showError("Route " + friendlyName(routeName) + " doesn't have offline shape data available.");
       return;
     }
 
-    // Otherwise, ask the Worker to fetch the live SFMTA feed server-side
-    // (see the DATA_BASE comment above for why this can't be a direct
-    // browser fetch to data.sfgov.org).
-    try{
-      const data = await fetchAIProxyJSON('routeShapes', { routeName });
-      const shapes = data.shapes || {};
-      if(!Object.keys(shapes).length) throw new Error('no shapes returned for this route');
-
-      drawRouteFromShapes(routeName, shapes);
-      refreshLiveBuses();
-    }catch(e){
-      console.error(e);
-      showError("Route " + friendlyName(routeName) + " isn't in the offline set and the live SFMTA feed couldn't be reached from here. Lines 1–14 always work offline; other lines need that live connection to succeed.");
-    }
+    drawRouteFromShapes(routeName, EMBEDDED_ROUTES[routeName]);
+    refreshLiveBuses();
   }
 
   function drawRouteFromShapes(routeName, shapes){

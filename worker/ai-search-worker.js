@@ -2,11 +2,7 @@
 //
 // This Cloudflare Worker is the only piece of the AI point-search feature
 // that needs a secret API key, so it lives server-side, same pattern as the
-// muni-511-proxy Worker that already fronts 511.org for this app. It also
-// proxies the route-shape lookup against data.sfgov.org (see `routeShapes`
-// below) — that dataset doesn't reliably send a browser-usable CORS header,
-// so the browser can't always fetch it directly; a server-to-server request
-// from this Worker isn't subject to CORS at all.
+// muni-511-proxy Worker that already fronts 511.org for this app.
 //
 // It never discovers places itself — it only turns natural-language input
 // into structured search parameters, and separately writes richer
@@ -33,12 +29,6 @@
 //     extra web search (see MAX_WEB_SEARCHES_PER_DESCRIBE below). `pirate`
 //     is optional (defaults to false) — when true, descriptions are written
 //     in a pirate's voice while keeping the underlying facts unchanged.
-//
-//   { action: "routeShapes", routeName: "33" }
-//     -> { shapes: { I: "MULTILINESTRING (...)", O: "MULTILINESTRING (...)" } }
-//     Passes through SFMTA's "Muni Simple Routes" dataset (data.sfgov.org,
-//     id 9exe-acju) for a route not in the client's embedded fallback set.
-//     Doesn't touch Anthropic at all — no API key or web-search cost.
 //
 // Cost controls: only the app's own origin may call this (checked against
 // the ALLOWED_ORIGINS var below), and every request is rate-limited both
@@ -72,7 +62,6 @@ const MAX_POINTS_PER_DESCRIBE = 20;
 const MAX_WEB_SEARCHES_PER_DESCRIBE = 10;
 const DEFAULT_MAX_REQUESTS_PER_MINUTE_PER_IP = 12;
 const DEFAULT_MAX_DAILY_REQUESTS = 400;
-const ROUTE_SHAPES_ENDPOINT = "https://data.sfgov.org/resource/9exe-acju.json";
 
 function parseAllowedOrigins(env) {
   return String(env.ALLOWED_ORIGINS || "")
@@ -262,42 +251,6 @@ async function callClaude(env, { model, system, userText, tool }) {
   return toolUse.input;
 }
 
-async function fetchRouteShapeRows(routeName, filterFull) {
-  const url = ROUTE_SHAPES_ENDPOINT + "?route_name=" + encodeURIComponent(routeName) +
-    (filterFull ? "&pattern_type=F" : "") + "&$limit=50";
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`SFMTA feed error ${res.status}`);
-  return res.json();
-}
-
-// Passes through SFMTA's public route-shapes dataset server-side, since
-// data.sfgov.org doesn't reliably send CORS headers the browser will
-// accept. No Anthropic key or rate-limit budget involved — it's a plain
-// fetch of a free, keyless public dataset.
-async function handleRouteShapes(body, corsHeaders) {
-  const routeName = String(body.routeName || "").trim().slice(0, 10);
-  if (!routeName) return jsonResponse({ error: "Missing 'routeName'" }, 400, corsHeaders);
-
-  // pattern_type=F ("full length pattern") is what the dataset's own docs
-  // call the standard case, but a handful of routes (rail-replacement
-  // shuttles, tripper-only services like 714) apparently aren't tagged that
-  // way and come back with zero rows under that filter even though SFMTA
-  // still publishes a shape for them. Retry once without it before giving up.
-  let rows = await fetchRouteShapeRows(routeName, true);
-  if (!rows.length) rows = await fetchRouteShapeRows(routeName, false);
-
-  const seenDir = {};
-  const shapes = {};
-  rows.forEach((row) => {
-    const dir = row.direction; // 'I' or 'O'
-    if (seenDir[dir]) return; // keep first full pattern per direction to avoid overlapping dupes
-    seenDir[dir] = true;
-    shapes[dir] = row.shape;
-  });
-
-  return jsonResponse({ shapes }, 200, corsHeaders);
-}
-
 async function handleInterpret(env, body, corsHeaders) {
   const query = String(body.query || "").trim().slice(0, 200);
   if (!query) return jsonResponse({ error: "Missing 'query'" }, 400, corsHeaders);
@@ -424,16 +377,6 @@ export default {
       return jsonResponse({ error: "Invalid JSON body" }, 400, corsHeadersFor(origin));
     }
 
-    // No Anthropic key, KV, or rate limit needed for this one — it's a
-    // plain pass-through of a free public dataset, not an AI call.
-    if (body.action === "routeShapes") {
-      try {
-        return await handleRouteShapes(body, corsHeadersFor(origin));
-      } catch (e) {
-        return jsonResponse({ error: String((e && e.message) || e) }, 502, corsHeadersFor(origin));
-      }
-    }
-
     if (!env.ANTHROPIC_API_KEY) {
       return jsonResponse({ error: "Worker is missing the ANTHROPIC_API_KEY secret" }, 500, corsHeadersFor(origin));
     }
@@ -449,7 +392,7 @@ export default {
     try {
       if (body.action === "interpret") return await handleInterpret(env, body, corsHeadersFor(origin));
       if (body.action === "describe") return await handleDescribe(env, body, corsHeadersFor(origin));
-      return jsonResponse({ error: "Unknown action; expected 'interpret', 'describe', or 'routeShapes'" }, 400, corsHeadersFor(origin));
+      return jsonResponse({ error: "Unknown action; expected 'interpret' or 'describe'" }, 400, corsHeadersFor(origin));
     } catch (e) {
       return jsonResponse({ error: String((e && e.message) || e) }, 502, corsHeadersFor(origin));
     }
