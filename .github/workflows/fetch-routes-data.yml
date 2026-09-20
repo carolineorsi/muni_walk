@@ -1,21 +1,19 @@
 name: Fetch routes data (one-off)
 
-# Temporary, manually-triggered workflow: regenerates js/routes-data.js from
-# SFMTA's public route-shapes dataset and commits it to whichever branch this
-# is run on. Not wired to any automatic trigger. Safe to delete once the
-# hard-coded route data is in place — see scripts/fetch-routes-data.mjs to
-# regenerate it again by hand in the future.
+# Temporary, manually-triggered workflow, present on main only so
+# workflow_dispatch can invoke it (GitHub requires that). It doesn't touch
+# main's own content — it checks out the target feature branch, regenerates
+# js/routes-data.js there from SFMTA's public route-shapes dataset, and
+# pushes the result back to that branch. Delete this file (and
+# scripts/fetch-routes-data.mjs, if no longer wanted) once the hard-coded
+# route data is in place.
 on:
-  workflow_dispatch: {}
-  # workflow_dispatch alone won't let the API trigger this until the file
-  # exists on the default branch, so also fire on push to this feature
-  # branch. The commit this job pushes back includes [skip ci] so it doesn't
-  # loop.
-  push:
-    branches: [claude/muni-routes-hardcode-ne0wd4]
-    paths:
-      - ".github/workflows/fetch-routes-data.yml"
-      - "scripts/fetch-routes-data.mjs"
+  workflow_dispatch:
+    inputs:
+      target_branch:
+        description: "Branch to regenerate js/routes-data.js on and push to"
+        required: true
+        default: "claude/muni-routes-hardcode-ne0wd4"
 
 permissions:
   contents: write
@@ -25,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.target_branch }}
 
       - uses: actions/setup-node@v4
         with:
@@ -42,5 +42,5 @@ jobs:
             echo "No changes to commit"
             exit 0
           fi
-          git commit -m "Regenerate js/routes-data.js from SFMTA route-shapes dataset [skip ci]"
-          git push origin HEAD:${{ github.ref_name }}
+          git commit -m "Regenerate js/routes-data.js from SFMTA route-shapes dataset"
+          git push origin HEAD:${{ github.event.inputs.target_branch }}
