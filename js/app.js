@@ -264,6 +264,7 @@
   ];
 
   function setLayerVisible(layer, on, persist){
+    if(on && layer.build && !layer.built){ layer.build(); layer.built = true; }
     if(on){ layer.group.addTo(map); } else { map.removeLayer(layer.group); }
     if(on && layer.id === 'bingo') refreshBingoMarkerOpenState(); // marker DOM only exists once added to the map
     const toggle = document.getElementById('layer-toggle-' + layer.id);
@@ -299,8 +300,6 @@
       setLayerVisible(layer, on, false);
     });
   }
-
-  initLayers();
 
   // ---------- Route names ----------
   // Maps a route's base code (after stripping the trailing "BUS" used for
@@ -492,6 +491,7 @@
     activeDirection = null;
     progressModel = null;
     currentRouteName = routeName || null;
+    updateAllRoutesDimming();
     document.getElementById('info-card').classList.remove('visible');
     document.getElementById('search-fab-btn').classList.remove('visible');
     document.getElementById('live-fab-btn').classList.remove('visible');
@@ -569,6 +569,145 @@
   }
 
   // Compass bearing in degrees (0 = north, clockwise) from point a to b.
+  // ---------- All-routes overlay ----------
+  // Every Muni line drawn at once, toggled from the Layers panel. Lines go on
+  // their own canvas pane beneath the selected route so they stay context,
+  // not clutter. Many lines share streets, so a tap lists every line near
+  // the tapped point (not just the topmost one), each linking to that route.
+  const ALL_ROUTES_TAP_PX = 10;
+  map.createPane('allRoutesPane');
+  map.getPane('allRoutesPane').style.zIndex = 350; // below overlayPane (400), where the selected route draws
+  const allRoutesRenderer = L.canvas({ pane: 'allRoutesPane', tolerance: ALL_ROUTES_TAP_PX });
+  const allRoutesLayerGroup = L.layerGroup();
+  let allRoutesPolylines = []; // { route, polyline }
+  let allRoutesHighlighted = [];
+
+  function isRailRoute(code){
+    return /^[A-Z]$/.test(friendlyName(code));
+  }
+
+  function allRoutesColor(index, total){
+    // Spread hues evenly, alternating lightness so neighbours in the list
+    // (often neighbours on the map, e.g. 5/5R) don't look identical.
+    const hue = Math.round((index * 360 / total) % 360);
+    const light = index % 2 ? 48 : 60;
+    return 'hsl(' + hue + ',75%,' + light + '%)';
+  }
+
+  function allRoutesStyle(code){
+    return { weight: isRailRoute(code) ? 4 : 2.5, opacity: 0.75 };
+  }
+
+  // Fade the network back while a single route is selected so that route stands out.
+  function updateAllRoutesDimming(){
+    map.getPane('allRoutesPane').style.opacity = currentRouteName ? 0.35 : 1;
+  }
+
+  function buildAllRoutesLayer(){
+    const routes = sortRoutes(EMBEDDED_ROUTE_NAMES);
+    routes.forEach((route, i)=>{
+      const color = allRoutesColor(i, routes.length);
+      const shapes = EMBEDDED_ROUTES[route];
+      Object.keys(shapes).forEach(dir=>{
+        extractLinesFromShape(shapes[dir]).forEach(latlngs=>{
+          if(latlngs.length < 2) return;
+          const polyline = L.polyline(latlngs, Object.assign({
+            renderer: allRoutesRenderer, color, lineCap:'round', lineJoin:'round'
+          }, allRoutesStyle(route)));
+          polyline.on('click', e => showAllRoutesPopup(e.latlng));
+          polyline.addTo(allRoutesLayerGroup);
+          allRoutesPolylines.push({ route, polyline });
+        });
+      });
+    });
+  }
+
+  function routesNearLatLng(latlng){
+    const p = map.latLngToLayerPoint(latlng);
+    const hits = new Map(); // route -> [polylines]
+    allRoutesPolylines.forEach(({ route, polyline })=>{
+      // Cheap reject: skip lines whose pixel bounding box (plus tap slop) misses the tap.
+      const b = polyline.getBounds();
+      const nw = map.latLngToLayerPoint(b.getNorthWest()), se = map.latLngToLayerPoint(b.getSouthEast());
+      if(p.x < nw.x - ALL_ROUTES_TAP_PX || p.x > se.x + ALL_ROUTES_TAP_PX ||
+         p.y < nw.y - ALL_ROUTES_TAP_PX || p.y > se.y + ALL_ROUTES_TAP_PX) return;
+      const pts = polyline.getLatLngs().map(ll => map.latLngToLayerPoint(ll));
+      for(let i=0;i<pts.length-1;i++){
+        if(L.LineUtil.pointToSegmentDistance(p, pts[i], pts[i+1]) <= ALL_ROUTES_TAP_PX){
+          if(!hits.has(route)) hits.set(route, []);
+          hits.get(route).push(polyline);
+          break;
+        }
+      }
+    });
+    return hits;
+  }
+
+  function clearAllRoutesHighlight(){
+    allRoutesHighlighted.forEach(({ route, polyline })=> polyline.setStyle(allRoutesStyle(route)));
+    allRoutesHighlighted = [];
+  }
+
+  function showAllRoutesPopup(latlng){
+    const hits = routesNearLatLng(latlng);
+    if(!hits.size) return;
+    clearAllRoutesHighlight();
+    const routes = sortRoutes(Array.from(hits.keys()));
+    routes.forEach(route=>{
+      hits.get(route).forEach(polyline=>{
+        polyline.setStyle({ weight: allRoutesStyle(route).weight + 3, opacity: 1 });
+        polyline.bringToFront();
+        allRoutesHighlighted.push({ route, polyline });
+      });
+    });
+
+    // Rail lines and their bus substitutes (e.g. N / NBUS) read the same — list once.
+    const seen = new Set();
+    const rows = routes.filter(route=>{
+      const key = friendlyName(route);
+      if(seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    const rowsHtml = rows.map(route=>{
+      const color = allRoutesPolylines.find(r => r.route === route).polyline.options.color;
+      const name = ROUTE_NAMES[friendlyName(route)] || '';
+      return '<button type="button" class="all-routes-popup-row" data-route="' + escapeHtml(route) + '">' +
+        '<span class="all-routes-popup-badge" style="background:' + color + '">' + escapeHtml(friendlyName(route)) + '</span>' +
+        '<span class="all-routes-popup-name">' + escapeHtml(name) + '</span>' +
+      '</button>';
+    }).join('');
+    const heading = rows.length > 1 ? rows.length + ' lines here' : 'Muni line';
+    // Keep the popup clear of the top bar (and the empty-state hint beneath it, when shown).
+    const hint = document.getElementById('empty-hint');
+    const topOverlay = hint.classList.contains('hidden') ? document.getElementById('headsign') : hint;
+    const topInset = topOverlay.getBoundingClientRect().bottom;
+
+    L.popup({
+      className: 'all-routes-popup', maxWidth: 260, maxHeight: 260,
+      autoPanPaddingTopLeft: [16, topInset + 16]
+    })
+      .setLatLng(latlng)
+      .setContent('<div class="all-routes-popup-heading">' + heading + '</div>' + rowsHtml +
+        '<div class="all-routes-popup-hint">Tap a line to follow it</div>')
+      .on('remove', clearAllRoutesHighlight)
+      .openOn(map);
+  }
+
+  map.on('popupopen', e=>{
+    const el = e.popup.getElement();
+    if(!el || !el.classList.contains('all-routes-popup')) return;
+    el.querySelectorAll('.all-routes-popup-row').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        map.closePopup();
+        select.value = btn.dataset.route;
+        loadRoute(btn.dataset.route);
+      });
+    });
+  });
+
+  LAYERS.push({ id: 'all-routes', label: 'All Muni routes', group: allRoutesLayerGroup, defaultVisible: false, build: buildAllRoutesLayer });
+
   function computeBearingDeg(a, b){
     const lat1 = a[0]*Math.PI/180, lat2 = b[0]*Math.PI/180;
     const dLon = (b[1]-a[1])*Math.PI/180;
@@ -2443,4 +2582,5 @@
 
   // ---------- init ----------
   loadRouteList();
+  initLayers();
 })();
