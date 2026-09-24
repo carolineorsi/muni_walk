@@ -17,6 +17,10 @@ GPS position against it, and shows live buses running that route.
 - **Live buses** — toggle live tracking to see real-time vehicle positions
   for the selected route and direction, plus the next predicted arrival at
   your nearest stop.
+- **Stop arrivals** — every stop on the selected route is drawn on the map;
+  tap one to see predicted arrivals for all the lines serving that stop
+  (not just the route you picked), grouped by line and destination. The
+  popup refreshes itself once a minute while it's open.
 - **Find along the route** — type a free-text request ("restaurants",
   "historical sites", "cozy coffee shops") and get points of interest
   plotted on the map, filtered to within 1/4 mile of the route (and, once
