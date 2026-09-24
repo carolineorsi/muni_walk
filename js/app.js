@@ -518,6 +518,10 @@
     }
 
     drawRouteFromShapes(routeName, EMBEDDED_ROUTES[routeName]);
+    // Stops are drawn for every selected route (not just while live buses
+    // are on) so any of them can be tapped for its arrival times.
+    stopMarkersDrawnForRoute = routeName;
+    refreshStopMarkers(routeName);
     refreshLiveBuses();
   }
 
@@ -1339,6 +1343,7 @@
         ensureDirectionStopIds(routeName, 'I'),
         ensureDirectionStopIds(routeName, 'O')
       ]);
+      if(routeName !== currentRouteName) return; // user switched routes while this was loading
 
       stopLayerGroup.clearLayers();
       stopMarkersInfo = [];
@@ -1348,22 +1353,22 @@
         const isIn = inboundIds && inboundIds.has(code);
         const isOut = outboundIds && outboundIds.has(code);
 
-        let html, size;
+        let dot;
         if(isIn && isOut){
-          html = '<div style="width:12px;height:12px;border-radius:50%;overflow:hidden;display:flex;border:2px solid #0b0d10;box-shadow:0 1px 4px rgba(0,0,0,.5);">' +
-                 '<div style="width:50%;background:var(--inbound);"></div>' +
-                 '<div style="width:50%;background:var(--outbound);"></div>' +
-                 '</div>';
-          size = [12,12];
+          dot = '<div style="width:12px;height:12px;border-radius:50%;overflow:hidden;display:flex;border:2px solid #0b0d10;box-shadow:0 1px 4px rgba(0,0,0,.5);">' +
+                '<div style="width:50%;background:var(--inbound);"></div>' +
+                '<div style="width:50%;background:var(--outbound);"></div>' +
+                '</div>';
         }else{
           const cls = isIn ? 'I' : (isOut ? 'O' : 'unknown');
-          html = '<div class="stop-dot ' + cls + '"></div>';
-          size = [10,10];
+          dot = '<div class="stop-dot ' + cls + '"></div>';
         }
 
-        const icon = L.divIcon({ className: '', html, iconSize: size, iconAnchor: [size[0]/2, size[1]/2] });
-        const marker = L.marker([s.lat, s.lon], { icon, interactive: false, keyboard: false, zIndexOffset: 100 })
-          .bindTooltip(s.name, { direction: 'top', offset: [0,-6] })
+        // The dot is tiny, so wrap it in a transparent, finger-sized hit area.
+        const size = STOP_TAP_PX;
+        const icon = L.divIcon({ className: '', html: '<div class="stop-hit">' + dot + '</div>', iconSize: [size,size], iconAnchor: [size/2, size/2] });
+        const marker = L.marker([s.lat, s.lon], { icon, title: s.name, zIndexOffset: 100 })
+          .on('click', ()=> showStopArrivalsPopup(s))
           .addTo(stopLayerGroup);
 
         stopMarkersInfo.push({ marker, isIn, isOut });
@@ -1386,6 +1391,98 @@
       const belongsToOther = (activeDirection === 'I' && isOut && !isIn) || (activeDirection === 'O' && isIn && !isOut);
       el.style.opacity = belongsToOther ? '0.3' : '0.95';
     });
+  }
+
+  // ---------- Tap a stop for arrivals ----------
+  // Tapping any stop marker opens a popup listing predicted arrivals for
+  // every line serving that stop (not just the selected route), from the
+  // same 511 StopMonitoring feed the live-bus card uses. It refreshes
+  // itself while open; 511's per-key rate limit is why that's once a
+  // minute rather than more often.
+  const STOP_TAP_PX = 26;
+  const STOP_POPUP_REFRESH_MS = 60000;
+  const STOP_POPUP_MAX_TIMES = 3;
+  let stopPopupTimer = null;
+  let stopPopupToken = 0;
+
+  function formatArrivalMins(mins){
+    return mins <= 0 ? 'due' : (mins + ' min');
+  }
+
+  // Groups predictions by line + destination, soonest line first, with the
+  // selected route pulled to the top since it's the one being followed.
+  function groupStopArrivals(journeys){
+    const now = Date.now();
+    const groups = new Map();
+    journeys.forEach(j=>{
+      const arrivalIso = j.expected || j.aimed;
+      if(!arrivalIso || !j.lineRef) return;
+      const mins = Math.round((new Date(arrivalIso).getTime() - now) / 60000);
+      if(isNaN(mins) || mins < -1) return; // already left
+      const line = friendlyName(String(j.lineRef).split(/[:_/\s]+/).filter(Boolean).pop() || String(j.lineRef));
+      const dest = refValue(j.destination) || '';
+      const key = line + '|' + dest;
+      if(!groups.has(key)) groups.set(key, { line, lineRef: j.lineRef, dest, mins: [] });
+      groups.get(key).mins.push(mins);
+    });
+    const list = Array.from(groups.values());
+    list.forEach(g => g.mins.sort((a,b) => a-b));
+    const isSelected = g => currentRouteName && matchesRoute(g.lineRef, currentRouteName);
+    return list.sort((a,b)=>{
+      if(isSelected(a) !== isSelected(b)) return isSelected(a) ? -1 : 1;
+      return a.mins[0] - b.mins[0];
+    });
+  }
+
+  function buildStopPopupHtml(stop, body){
+    return '<div class="stop-popup-title">' + escapeHtml(stop.name) + '</div>' +
+      (stop.code ? '<div class="stop-popup-code">Stop #' + escapeHtml(String(stop.code)) + '</div>' : '') +
+      '<div class="stop-popup-body">' + body + '</div>';
+  }
+
+  function buildStopArrivalsHtml(groups){
+    if(!groups.length) return '<div class="stop-popup-empty">No arrivals predicted right now.</div>';
+    return groups.map(g=>{
+      const selected = currentRouteName && matchesRoute(g.lineRef, currentRouteName);
+      const times = g.mins.slice(0, STOP_POPUP_MAX_TIMES).map(formatArrivalMins).join(', ');
+      return '<div class="stop-popup-row">' +
+        '<span class="stop-popup-badge' + (selected ? ' selected' : '') + '">' + escapeHtml(g.line) + '</span>' +
+        '<span class="stop-popup-dest">' + escapeHtml(g.dest || '') + '</span>' +
+        '<span class="stop-popup-times">' + escapeHtml(times) + '</span>' +
+      '</div>';
+    }).join('') + '<div class="stop-popup-updated">Updated ' +
+      new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '</div>';
+  }
+
+  async function loadStopArrivals(popup, stop, token){
+    try{
+      const data = await fetchProxyJSON('StopMonitoring', { agency: 'SF', stopcode: stop.code });
+      if(token !== stopPopupToken) return; // a different stop's popup has since opened
+      popup.setContent(buildStopPopupHtml(stop, buildStopArrivalsHtml(groupStopArrivals(extractJourneys(data)))));
+    }catch(e){
+      console.warn('[muni-walker] stop arrivals unavailable:', e);
+      if(token !== stopPopupToken) return;
+      popup.setContent(buildStopPopupHtml(stop, '<div class="stop-popup-empty">Couldn’t load arrivals. Try again in a moment.</div>'));
+    }
+  }
+
+  function stopStopPopupRefresh(){
+    if(stopPopupTimer){ clearInterval(stopPopupTimer); stopPopupTimer = null; }
+  }
+
+  function showStopArrivalsPopup(stop){
+    stopStopPopupRefresh();
+    const token = ++stopPopupToken;
+    const popup = L.popup({
+      className: 'stop-popup', maxWidth: 280, maxHeight: 280,
+      offset: [0, -4], autoPanPaddingTopLeft: [16, document.getElementById('headsign').getBoundingClientRect().bottom + 16]
+    })
+      .setLatLng([stop.lat, stop.lon])
+      .setContent(buildStopPopupHtml(stop, '<div class="stop-popup-empty">Checking arrivals…</div>'))
+      .on('remove', ()=>{ if(token === stopPopupToken) stopStopPopupRefresh(); })
+      .openOn(map);
+    loadStopArrivals(popup, stop, token);
+    stopPopupTimer = setInterval(()=> loadStopArrivals(popup, stop, token), STOP_POPUP_REFRESH_MS);
   }
 
   function renderLiveStatus(text){
@@ -1443,9 +1540,11 @@
       renderLiveStatus('');
       renderLiveArrival(null, null, false);
       busLayerGroup.clearLayers();
-      stopLayerGroup.clearLayers();
-      stopMarkersDrawnForRoute = null;
-      stopMarkersInfo = [];
+      if(!currentRouteName){
+        stopLayerGroup.clearLayers();
+        stopMarkersDrawnForRoute = null;
+        stopMarkersInfo = [];
+      }
       nearestStopInfo = null;
       updateNearestStopHighlight();
       return;
@@ -1524,9 +1623,6 @@
       renderLiveStatus('');
       renderLiveArrival(null, null, false);
       busLayerGroup.clearLayers();
-      stopLayerGroup.clearLayers();
-      stopMarkersDrawnForRoute = null;
-      stopMarkersInfo = [];
       nearestStopInfo = null;
       updateNearestStopHighlight();
     }
