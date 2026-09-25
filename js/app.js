@@ -2635,11 +2635,31 @@
     const pct = document.getElementById('progress-pct').textContent;
     const dist = document.getElementById('distance-value').textContent;
     if(pct && pct !== '—') parts.push(pct + ' along');
+    else if(document.getElementById('route-length-block').classList.contains('visible')){
+      parts.push(document.getElementById('route-length-value').textContent + ' long');
+    }
     if(dist && dist !== '—') parts.push(dist + ' off-route');
     el.textContent = parts.join(' · ');
   }
 
+  // Total length of the selected route (active direction). Shown whenever a
+  // route is selected, regardless of whether the user is near it.
+  function updateRouteLengthReadout(){
+    const block = document.getElementById('route-length-block');
+    if(!activeDirection || !progressModel){
+      block.classList.remove('visible');
+      return;
+    }
+    const totalMiles = progressModel.total / 1609.344;
+    document.getElementById('route-length-label').textContent =
+      'Route length (' + (activeDirection === 'I' ? 'Inbound' : 'Outbound') + ')';
+    document.getElementById('route-length-value').textContent = totalMiles.toFixed(1) + ' mi';
+    block.classList.add('visible');
+  }
+
   function updateProgressReadout(pos){
+    updateRouteLengthReadout();
+
     const block = document.getElementById('progress-block');
     const milesEl = document.getElementById('progress-miles');
     const pctEl = document.getElementById('progress-pct');
