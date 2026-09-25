@@ -152,6 +152,10 @@
   .dir-btn.outbound.active{background:rgba(239,91,78,.18);border-color:var(--outbound);}
 
   /* ---------- Progress-along-route ---------- */
+  #route-length-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);display:none;justify-content:space-between;align-items:baseline;gap:12px;}
+  #route-length-block.visible{display:flex;}
+  #route-length-block .stat-label{margin:0;}
+  #route-length-value{font-family:'Space Mono',monospace;font-weight:700;font-size:15px;color:var(--paper);}
   #progress-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);display:none;}
   #progress-block.visible{display:block;}
   .progress-heading{display:flex;justify-content:space-between;align-items:baseline;}
