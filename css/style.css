@@ -256,22 +256,23 @@
 
   /* ---------- Route quiz ---------- */
   #quiz-score{font-family:'Space Mono',monospace;font-size:12px;color:var(--muted);white-space:nowrap;}
-  #quiz-choices{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-  .quiz-choice{
-    display:flex;align-items:center;gap:8px;min-width:0;
-    padding:8px 10px;border-radius:9px;text-align:left;cursor:pointer;
-    background:var(--panel-2);border:1px solid var(--line-hair);color:var(--paper);
-    font-family:'Inter';font-size:12.5px;
+  #quiz-guess-form{display:flex;gap:8px;}
+  #quiz-guess-select{
+    flex:1 1 auto;min-width:0;
+    background:#161a1f;color:var(--paper);
+    border:1px solid var(--line-hair);border-radius:8px;
+    padding:9px 10px;
+    font-family:'Inter';font-size:13.5px;
   }
-  .quiz-choice:disabled{cursor:default;}
-  .quiz-choice-badge{
-    flex:0 0 auto;min-width:30px;padding:2px 6px;border-radius:6px;text-align:center;
-    background:#2a3038;font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:16px;
+  #quiz-guess-select.correct{border-color:var(--good);}
+  #quiz-guess-select.wrong{border-color:var(--outbound);}
+  #quiz-guess-btn{
+    flex:0 0 auto;padding:0 14px;border-radius:8px;
+    background:var(--amber);border:none;color:#1a1204;
+    font-family:'Inter';font-size:13px;font-weight:700;cursor:pointer;
   }
-  .quiz-choice-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-  .quiz-choice.correct{border-color:var(--good);background:rgba(79,209,165,.16);}
-  .quiz-choice.wrong{border-color:var(--outbound);background:rgba(239,91,78,.16);}
-  .quiz-choice.dimmed{opacity:.45;}
+  #quiz-guess-btn:disabled,
+  #quiz-guess-select:disabled{opacity:.5;cursor:default;}
   #quiz-feedback{font-size:12.5px;margin-top:10px;line-height:1.45;display:none;}
   #quiz-feedback.visible{display:block;}
   #quiz-feedback.correct{color:var(--good);}
