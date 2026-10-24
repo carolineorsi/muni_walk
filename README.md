@@ -31,6 +31,11 @@ GPS position against it, and shows live buses running that route.
   written on demand rather than for every pin up front, and the AI looks
   the place up when that's useful so it covers more than just its OSM
   category.
+- **Route quiz** — tap the question-mark button to test your Muni
+  knowledge: a random line is drawn on the map with no number, name, or
+  direction colors, and you pick which line it is from four choices. The
+  panel keeps score and your streak; after each answer you can jump to the
+  next route or start following the one you just saw.
 - **Basemap switcher** — choose between dark, light, streets, and satellite
   map styles.
 - **Map layers** — toggle optional point layers on/off from the Layers
