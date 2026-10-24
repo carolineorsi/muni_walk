@@ -179,7 +179,10 @@
         </button>
       </div>
       <div class="panel-body">
-        <div id="quiz-choices"></div>
+        <form id="quiz-guess-form" autocomplete="off">
+          <select id="quiz-guess-select" aria-label="Your guess"></select>
+          <button id="quiz-guess-btn" type="submit">Guess</button>
+        </form>
         <div id="quiz-feedback"></div>
         <div id="quiz-actions">
           <button id="quiz-open-btn" type="button">Follow this line</button>

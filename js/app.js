@@ -2493,9 +2493,8 @@
 
   // ---------- Route quiz ----------
   // Draws a random line with no badge, name, or direction colors, and asks
-  // which line it is from four choices. Rail lines and their bus substitutes
+  // which line it is from the full list. Rail lines and their bus substitutes
   // (e.g. N / NBUS) are one question, so the pool is keyed by friendly name.
-  const QUIZ_CHOICE_COUNT = 4;
   const quizLayerGroup = L.layerGroup().addTo(map);
   const quizPool = (()=>{
     const byName = {};
@@ -2503,13 +2502,23 @@
       const key = friendlyName(code);
       if(!byName[key] || /BUS$/.test(byName[key])) byName[key] = code;
     });
-    return Object.values(byName);
+    return sortRoutes(Object.values(byName)); // integer-like keys reorder an object, so re-sort
   })();
   let quizActive = false;
   let quizQueue = [];
   let quizAnswer = null;
   let quizCorrect = 0, quizAsked = 0, quizStreak = 0;
   let quizHidAllRoutes = false;
+
+  const quizGuessSelect = document.getElementById('quiz-guess-select');
+  const quizGuessBtn = document.getElementById('quiz-guess-btn');
+  quizGuessSelect.innerHTML = '<option value="">Pick a line…</option>' +
+    quizPool.map(r => '<option value="' + escapeHtml(r) + '">' + escapeHtml(routeDisplayLabel(r)) + '</option>').join('');
+  quizGuessSelect.addEventListener('change', ()=>{ quizGuessBtn.disabled = !quizGuessSelect.value; });
+  document.getElementById('quiz-guess-form').addEventListener('submit', (e)=>{
+    e.preventDefault();
+    if(quizGuessSelect.value && !quizGuessSelect.disabled) answerQuiz(quizGuessSelect.value);
+  });
 
   function shuffled(list){
     const a = list.slice();
@@ -2544,22 +2553,10 @@
     });
     if(bounds.length) map.fitBounds(L.latLngBounds(bounds), {padding:[60,60]});
 
-    // Skip distractors from the same family (5 vs 5R, 8 vs 8AX) — their shapes
-    // are near-identical, so the line alone can't tell them apart.
-    const family = r => friendlyName(r).replace(/(X|R|AX|BX)$/,'');
-    const choices = shuffled([quizAnswer].concat(
-      shuffled(quizPool.filter(r => family(r) !== family(quizAnswer))).slice(0, QUIZ_CHOICE_COUNT - 1)
-    ));
-    const list = document.getElementById('quiz-choices');
-    list.innerHTML = choices.map(route=>
-      '<button type="button" class="quiz-choice" data-route="' + escapeHtml(route) + '">' +
-        '<span class="quiz-choice-badge">' + escapeHtml(friendlyName(route)) + '</span>' +
-        '<span class="quiz-choice-name">' + escapeHtml(ROUTE_NAMES[friendlyName(route)] || '') + '</span>' +
-      '</button>'
-    ).join('');
-    list.querySelectorAll('.quiz-choice').forEach(btn=>{
-      btn.addEventListener('click', ()=> answerQuiz(btn.dataset.route));
-    });
+    quizGuessSelect.value = '';
+    quizGuessSelect.className = '';
+    quizGuessSelect.disabled = false;
+    quizGuessBtn.disabled = true;
     document.getElementById('quiz-feedback').className = '';
     document.getElementById('quiz-actions').classList.remove('visible');
   }
@@ -2570,14 +2567,13 @@
     if(right){ quizCorrect++; quizStreak++; } else { quizStreak = 0; }
     updateQuizScore();
 
-    document.querySelectorAll('#quiz-choices .quiz-choice').forEach(btn=>{
-      btn.disabled = true;
-      if(btn.dataset.route === quizAnswer) btn.classList.add('correct');
-      else if(btn.dataset.route === route) btn.classList.add('wrong');
-      else btn.classList.add('dimmed');
-    });
+    quizGuessSelect.disabled = true;
+    quizGuessBtn.disabled = true;
+    quizGuessSelect.className = right ? 'correct' : 'wrong';
     const feedback = document.getElementById('quiz-feedback');
-    feedback.textContent = (right ? 'Correct! ' : 'Not quite — ') + 'that’s the ' + routeDisplayLabel(quizAnswer) + '.';
+    feedback.textContent = right
+      ? 'Correct! That’s the ' + routeDisplayLabel(quizAnswer) + '.'
+      : 'Not quite — you guessed the ' + routeDisplayLabel(route) + ', but that’s the ' + routeDisplayLabel(quizAnswer) + '.';
     feedback.className = 'visible ' + (right ? 'correct' : 'wrong');
     document.getElementById('quiz-actions').classList.add('visible');
   }
