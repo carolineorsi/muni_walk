@@ -66,6 +66,14 @@
     </svg>
   </button>
 
+  <button id="quiz-fab-btn" class="fab-btn visible" title="Route quiz" aria-label="Route quiz">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="9"></circle>
+      <path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .9-1 1.6v.6"></path>
+      <circle cx="12" cy="17" r=".5" fill="currentColor"></circle>
+    </svg>
+  </button>
+
   <div id="panel-stack">
     <div id="info-card" class="floating-panel">
       <div class="info-row">
@@ -157,6 +165,26 @@
       </div>
       <div class="panel-body">
         <div id="layers-list"></div>
+      </div>
+    </div>
+
+    <div id="quiz-card" class="floating-panel">
+      <div class="info-row">
+        <div class="info-title">Which line is this?</div>
+        <span id="quiz-score"></span>
+        <button id="quiz-close-btn" class="panel-close-btn" title="End quiz" aria-label="End quiz">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l12 12M18 6L6 18"></path>
+          </svg>
+        </button>
+      </div>
+      <div class="panel-body">
+        <div id="quiz-choices"></div>
+        <div id="quiz-feedback"></div>
+        <div id="quiz-actions">
+          <button id="quiz-open-btn" type="button">Follow this line</button>
+          <button id="quiz-next-btn" type="button">Next route</button>
+        </div>
       </div>
     </div>
 
