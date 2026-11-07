@@ -444,6 +444,16 @@
   }
   .stat-label{color:var(--muted);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;font-family:'Inter';display:block;margin-bottom:2px;}
   #distance-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);display:flex;justify-content:space-between;align-items:center;gap:12px;}
+
+  #elevation-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);display:none;}
+  #elevation-block.visible{display:block;}
+  #elevation-block .progress-heading #elevation-gain{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;}
+  #elevation-chart{width:100%;height:70px;display:block;margin-top:6px;overflow:visible;}
+  #elevation-area{fill:rgba(242,167,59,.18);stroke:none;}
+  #elevation-line{fill:none;stroke:var(--amber);stroke-width:2;vector-effect:non-scaling-stroke;}
+  #elevation-marker-line{stroke:var(--good);stroke-width:1.5;stroke-dasharray:3 3;opacity:0;vector-effect:non-scaling-stroke;}
+  #elevation-marker-dot{fill:var(--good);opacity:0;}
+  #elevation-status{margin-top:4px;font-size:11px;color:var(--muted);}
   #distance-value{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--amber);line-height:1;}
   #distance-sub{font-size:11px;color:var(--muted);margin-top:2px;}
 

@@ -473,6 +473,14 @@
   let progressModel = null;    // { points:[[lat,lon],...], cumDist:[meters...], total:meters }
   let currentRouteName = null;
 
+  // ---------- Elevation profile state ----------
+  // elevationProfile holds the data behind the chart in #elevation-block:
+  // alongArr/elevArr are parallel arrays (meters along route, meters elevation),
+  // sampled evenly across the active direction's full length.
+  let elevationProfile = null; // { alongArr, elevArr, total, minElev, maxElev }
+  let elevationToken = 0;      // invalidates an in-flight fetch from a route/direction switched away from
+  const elevationCache = {};   // "routeName|dir" -> elevationProfile (skip refetching on reselect)
+
   // ---------- Load + draw route ----------
   function loadRoute(routeName){
     routeLayerGroup.clearLayers();
@@ -502,6 +510,9 @@
     document.getElementById('progress-block').classList.remove('visible');
     document.getElementById('direction-toggle').innerHTML = '';
     renderLiveList([]); // clear any stale live-bus list from the previous route
+    elevationProfile = null;
+    elevationToken++; // invalidate any in-flight elevation fetch from the previous route
+    document.getElementById('elevation-block').classList.remove('visible');
 
     if(!routeName){
       badge.textContent = 'SF'; badge.classList.add('empty');
@@ -857,6 +868,9 @@
       activeDirection = null;
       progressModel = null;
       document.getElementById('progress-block').classList.remove('visible');
+      elevationProfile = null;
+      elevationToken++;
+      document.getElementById('elevation-block').classList.remove('visible');
       return;
     }
 
@@ -877,6 +891,7 @@
     applyActiveDirectionStyling();
     buildProgressModel();
     document.getElementById('progress-block').classList.add('visible');
+    loadElevationProfile();
   }
 
   function setActiveDirection(d){
@@ -889,6 +904,7 @@
     });
     applyActiveDirectionStyling();
     buildProgressModel();
+    loadElevationProfile();
     updateDistanceReadout();
     lastArrivalFetch = { stopCode: null, time: 0 }; // force a fresh arrival lookup for the new direction
     refreshLiveBuses();
@@ -976,6 +992,202 @@
       totalMeters: total,
       pct: total > 0 ? (bestAlong/total)*100 : 0
     };
+  }
+
+  // ---------- Elevation profile ----------
+  // Finds the lat/lon at a given distance `along` the active-direction route
+  // (0..progressModel.total meters), walking the same groups/cumDist
+  // structure buildProgressModel() built for computeProgress().
+  function pointAtAlong(along){
+    if(!progressModel || !progressModel.groups.length) return null;
+    const { groups, total } = progressModel;
+    const clamped = Math.max(0, Math.min(total, along));
+    for(let g=0; g<groups.length; g++){
+      const { points, cumDist, offset } = groups[g];
+      const groupTotal = cumDist[cumDist.length-1];
+      const isLastGroup = g === groups.length - 1;
+      if(clamped > offset + groupTotal && !isLastGroup) continue;
+      const localAlong = Math.max(0, Math.min(groupTotal, clamped - offset));
+      for(let i=0;i<points.length-1;i++){
+        if(localAlong <= cumDist[i+1] || i === points.length-2){
+          const segLen = cumDist[i+1] - cumDist[i];
+          const t = segLen > 0 ? (localAlong - cumDist[i]) / segLen : 0;
+          const a = points[i], b = points[i+1];
+          return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+        }
+      }
+      return points[0];
+    }
+    return null;
+  }
+
+  const ELEVATION_SAMPLE_COUNT = 50;
+  // Open-Meteo's elevation endpoint: free, no API key, takes parallel
+  // comma-separated lat/lon lists and returns one elevation (meters) per
+  // point. Called from the browser at runtime — not reachable from this
+  // dev sandbox's network policy, so it's untested here; if it's ever
+  // blocked for end users too, swap ELEVATION_API for another provider.
+  const ELEVATION_API = 'https://api.open-meteo.com/v1/elevation';
+
+  function loadElevationProfile(){
+    const block = document.getElementById('elevation-block');
+    const statusEl = document.getElementById('elevation-status');
+
+    if(!activeDirection || !progressModel || progressModel.total <= 0){
+      elevationProfile = null;
+      block.classList.remove('visible');
+      return;
+    }
+
+    const cacheKey = currentRouteName + '|' + activeDirection;
+    block.classList.add('visible');
+
+    if(elevationCache[cacheKey]){
+      elevationProfile = elevationCache[cacheKey];
+      renderElevationChart();
+      statusEl.textContent = '';
+      return;
+    }
+
+    elevationProfile = null;
+    renderElevationChart(); // clears the chart while a fresh fetch is loading
+    statusEl.textContent = 'Loading elevation…';
+
+    const myToken = ++elevationToken;
+    const total = progressModel.total;
+    const alongArr = [];
+    for(let i=0;i<ELEVATION_SAMPLE_COUNT;i++){
+      alongArr.push((i/(ELEVATION_SAMPLE_COUNT-1)) * total);
+    }
+    const coords = alongArr.map(a => pointAtAlong(a)).filter(Boolean);
+    if(coords.length < 2){
+      statusEl.textContent = 'Elevation unavailable for this route.';
+      return;
+    }
+
+    fetchElevations(coords).then(elevArr=>{
+      if(myToken !== elevationToken) return; // route/direction changed while this was in flight
+      if(!elevArr || elevArr.length !== coords.length){
+        statusEl.textContent = 'Elevation unavailable for this route.';
+        return;
+      }
+      const minElev = Math.min(...elevArr);
+      const maxElev = Math.max(...elevArr);
+      const profile = { alongArr: alongArr.slice(0, coords.length), elevArr, total, minElev, maxElev };
+      elevationCache[cacheKey] = profile;
+      elevationProfile = profile;
+      renderElevationChart();
+      statusEl.textContent = '';
+    }).catch(err=>{
+      if(myToken !== elevationToken) return;
+      console.warn('[muni-walker] elevation lookup failed:', err);
+      statusEl.textContent = 'Elevation unavailable (offline, or the data source is blocked).';
+    });
+  }
+
+  // Chunked defensively in case a very long multi-piece route ever needs
+  // more points than fit comfortably in one request.
+  function fetchElevations(coords){
+    const CHUNK = 100;
+    const chunks = [];
+    for(let i=0;i<coords.length;i+=CHUNK) chunks.push(coords.slice(i, i+CHUNK));
+
+    return Promise.all(chunks.map(chunk=>{
+      const lats = chunk.map(c=>c[0].toFixed(5)).join(',');
+      const lons = chunk.map(c=>c[1].toFixed(5)).join(',');
+      const url = ELEVATION_API + '?latitude=' + lats + '&longitude=' + lons;
+      return fetch(url).then(r=>{
+        if(!r.ok) throw new Error('elevation HTTP ' + r.status);
+        return r.json();
+      }).then(data => data.elevation);
+    })).then(parts => parts.flat());
+  }
+
+  const ELEVATION_CHART_W = 300, ELEVATION_CHART_H = 100;
+  const ELEVATION_CHART_PAD = 8;
+
+  function renderElevationChart(){
+    const areaPath = document.getElementById('elevation-area');
+    const linePath = document.getElementById('elevation-line');
+
+    if(!elevationProfile){
+      areaPath.setAttribute('d', '');
+      linePath.setAttribute('d', '');
+      document.getElementById('elevation-gain').textContent = '—';
+      hideElevationMarker();
+      return;
+    }
+
+    const { alongArr, elevArr, total, minElev, maxElev } = elevationProfile;
+    const W = ELEVATION_CHART_W, H = ELEVATION_CHART_H, PAD = ELEVATION_CHART_PAD;
+    const span = Math.max(maxElev - minElev, 1); // avoid a divide-by-zero on a dead-flat route
+
+    const xAt = along => total > 0 ? (along/total)*W : 0;
+    const yAt = elev => PAD + (1 - (elev-minElev)/span) * (H-2*PAD);
+
+    const linePts = alongArr.map((a,i)=> xAt(a).toFixed(1) + ',' + yAt(elevArr[i]).toFixed(1));
+    linePath.setAttribute('d', 'M' + linePts.join(' L'));
+    areaPath.setAttribute('d', 'M' + xAt(alongArr[0]).toFixed(1) + ',' + H
+      + ' L' + linePts.join(' L')
+      + ' L' + xAt(alongArr[alongArr.length-1]).toFixed(1) + ',' + H + ' Z');
+
+    let gain = 0, loss = 0;
+    for(let i=1;i<elevArr.length;i++){
+      const d = elevArr[i] - elevArr[i-1];
+      if(d > 0) gain += d; else loss += -d;
+    }
+    const toFeet = m => Math.round(m * 3.28084);
+    document.getElementById('elevation-gain').textContent =
+      '+' + toFeet(gain) + ' / -' + toFeet(loss) + ' ft';
+
+    updateElevationMarker(lastPos);
+  }
+
+  function hideElevationMarker(){
+    document.getElementById('elevation-marker-line').style.opacity = 0;
+    document.getElementById('elevation-marker-dot').style.opacity = 0;
+  }
+
+  // Moves the vertical "you are here" marker to the user's current position
+  // along the active-direction route. `pos` is [lat, lon], or null/undefined
+  // when GPS is off or the user has wandered away from the route.
+  function updateElevationMarker(pos){
+    const lineEl = document.getElementById('elevation-marker-line');
+    const dotEl = document.getElementById('elevation-marker-dot');
+
+    if(!elevationProfile || !pos){ hideElevationMarker(); return; }
+
+    const p = computeProgress(pos);
+    if(!p || p.perpMeters > PROGRESS_VISIBILITY_RADIUS_METERS){ hideElevationMarker(); return; }
+
+    const { alongArr, elevArr, minElev, maxElev } = elevationProfile;
+    const W = ELEVATION_CHART_W, H = ELEVATION_CHART_H, PAD = ELEVATION_CHART_PAD;
+    const span = Math.max(maxElev - minElev, 1);
+    const total = elevationProfile.total;
+    const x = total > 0 ? (p.alongMeters/total)*W : 0;
+
+    // Interpolate elevation at the marker's position from the sampled
+    // profile so the dot sits on the line rather than floating off it.
+    let elevAtMarker = elevArr[0];
+    for(let i=1;i<alongArr.length;i++){
+      if(p.alongMeters <= alongArr[i]){
+        const segSpan = alongArr[i] - alongArr[i-1];
+        const t = segSpan > 0 ? (p.alongMeters - alongArr[i-1]) / segSpan : 0;
+        elevAtMarker = elevArr[i-1] + (elevArr[i]-elevArr[i-1])*t;
+        break;
+      }
+      elevAtMarker = elevArr[i];
+    }
+    const y = PAD + (1 - (elevAtMarker-minElev)/span) * (H-2*PAD);
+
+    lineEl.setAttribute('x1', x.toFixed(1));
+    lineEl.setAttribute('x2', x.toFixed(1));
+    lineEl.setAttribute('y1', 0);
+    lineEl.setAttribute('y2', H);
+    lineEl.style.opacity = 1;
+    dotEl.setAttribute('cx', x.toFixed(1));
+    dotEl.setAttribute('cy', y.toFixed(1));
+    dotEl.style.opacity = 1;
   }
 
   // =====================================================================
@@ -2791,6 +3003,7 @@
 
   function updateProgressReadout(pos){
     updateRouteLengthReadout();
+    updateElevationMarker(pos);
 
     const block = document.getElementById('progress-block');
     const milesEl = document.getElementById('progress-miles');

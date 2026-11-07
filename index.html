@@ -117,6 +117,20 @@
           <div class="stat" id="nearest-coord">—</div>
         </div>
       </div>
+
+      <div id="elevation-block">
+        <div class="progress-heading">
+          <span class="stat-label">Elevation profile</span>
+          <span id="elevation-gain">—</span>
+        </div>
+        <svg id="elevation-chart" viewBox="0 0 300 100" preserveAspectRatio="none" aria-hidden="true">
+          <path id="elevation-area" d=""></path>
+          <path id="elevation-line" d=""></path>
+          <line id="elevation-marker-line" x1="0" y1="0" x2="0" y2="100"></line>
+          <circle id="elevation-marker-dot" cx="0" cy="0" r="3"></circle>
+        </svg>
+        <div id="elevation-status"></div>
+      </div>
       </div>
     </div>
 
