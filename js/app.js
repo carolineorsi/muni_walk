@@ -2735,7 +2735,7 @@
   // ---------- Geolocation ----------
   let meMarker = null;
   let watchId = null;
-  let following = false;
+  let centerOnNextFix = false;
   let lastPos = null;
 
   const locateBtn = document.getElementById('locate-btn');
@@ -2966,7 +2966,8 @@
       meMarker.setLatLng([lat,lon]);
     }
 
-    if(following){
+    if(centerOnNextFix){
+      centerOnNextFix = false;
       map.panTo([lat,lon], {animate:true});
     }
     updateDistanceReadout();
@@ -2977,8 +2978,7 @@
     console.warn(err);
     gpsText.textContent = 'GPS unavailable';
     showError('Location access was blocked or unavailable. Enable location permissions to track your position.');
-    following = false;
-    locateBtn.classList.remove('following');
+    centerOnNextFix = false;
   }
 
   function startWatch(){
@@ -2994,11 +2994,11 @@
   }
 
   locateBtn.addEventListener('click', ()=>{
-    following = !following;
-    locateBtn.classList.toggle('following', following);
-    if(following){
-      startWatch();
-      if(lastPos) map.panTo(lastPos, {animate:true});
+    startWatch();
+    if(lastPos){
+      map.panTo(lastPos, {animate:true});
+    }else{
+      centerOnNextFix = true;
     }
   });
 
