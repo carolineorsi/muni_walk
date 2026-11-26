@@ -448,12 +448,23 @@
   #elevation-block{margin-top:10px;padding-top:10px;border-top:1px solid var(--line-hair);display:none;}
   #elevation-block.visible{display:block;}
   #elevation-block .progress-heading #elevation-gain{font-size:11px;color:var(--muted);font-family:'Space Mono',monospace;}
-  #elevation-chart{width:100%;height:70px;display:block;margin-top:6px;overflow:visible;}
+  #elevation-chart{width:100%;height:70px;display:block;margin-top:6px;overflow:visible;touch-action:none;}
+  @media (hover:hover){ #elevation-chart{cursor:crosshair;} }
   #elevation-area{fill:rgba(242,167,59,.18);stroke:none;}
   #elevation-line{fill:none;stroke:var(--amber);stroke-width:2;vector-effect:non-scaling-stroke;}
   #elevation-marker-line{stroke:var(--good);stroke-width:1.5;stroke-dasharray:3 3;opacity:0;vector-effect:non-scaling-stroke;}
   #elevation-marker-dot{fill:var(--good);opacity:0;}
+  #elevation-scrub-line{stroke:var(--inbound);stroke-width:1.5;stroke-dasharray:3 3;opacity:0;vector-effect:non-scaling-stroke;pointer-events:none;}
+  #elevation-scrub-dot{fill:var(--inbound);opacity:0;pointer-events:none;}
   #elevation-status{margin-top:4px;font-size:11px;color:var(--muted);}
+
+  .elevation-scrub-marker{position:relative;width:14px;height:14px;}
+  .elevation-scrub-dot-icon{width:14px;height:14px;border-radius:50%;background:var(--inbound);border:3px solid #0b0d10;box-shadow:0 0 0 4px rgba(79,134,247,.25);}
+  .elevation-scrub-label{
+    position:absolute;left:50%;bottom:22px;transform:translateX(-50%);white-space:nowrap;
+    background:#0b0d10;color:var(--paper);font-family:'Space Mono',monospace;font-size:11px;
+    padding:2px 6px;border-radius:4px;border:1px solid var(--line-hair);
+  }
   #distance-value{font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:28px;color:var(--amber);line-height:1;}
   #distance-sub{font-size:11px;color:var(--muted);margin-top:2px;}
 
