@@ -2792,6 +2792,7 @@
       closeSidePanel(liveCard, liveFabBtn);
     }else{
       openSidePanel(liveCard, liveFabBtn);
+      if(!liveEnabled) setLiveEnabled(true);
     }
   });
   layersFabBtn.addEventListener('click', ()=>{
