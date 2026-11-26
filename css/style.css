@@ -496,6 +496,7 @@
   .fab-btn.visible{display:flex;}
   .fab-btn:active{transform:scale(.94);}
   .fab-btn.active{background:var(--amber);border-color:var(--amber);color:#1a1204;}
+  #live-fab-btn.live-on:not(.active){background:var(--good);border-color:var(--good);color:#06261c;}
   .fab-btn svg{width:20px;height:20px;}
 
   #basemap-select{

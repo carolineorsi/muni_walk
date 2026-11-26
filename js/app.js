@@ -1928,6 +1928,7 @@
   function setLiveEnabled(on){
     liveEnabled = on;
     document.getElementById('live-toggle').classList.toggle('on', on);
+    document.getElementById('live-fab-btn').classList.toggle('live-on', on);
     if(liveTimer){ clearInterval(liveTimer); liveTimer = null; }
 
     if(on){
