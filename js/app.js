@@ -481,6 +481,7 @@
   let elevationProfile = null; // { alongArr, elevArr, total, minElev, maxElev }
   let elevationToken = 0;      // invalidates an in-flight fetch from a route/direction switched away from
   const elevationCache = {};   // "routeName|dir" -> elevationProfile (skip refetching on reselect)
+  let elevationScrubMarker = null; // map marker shown while hovering/dragging the elevation chart
 
   // ---------- Load + draw route ----------
   function loadRoute(routeName){
@@ -514,6 +515,7 @@
     elevationProfile = null;
     elevationToken++; // invalidate any in-flight elevation fetch from the previous route
     document.getElementById('elevation-block').classList.remove('visible');
+    hideElevationScrub();
 
     if(!routeName){
       badge.textContent = 'SF'; badge.classList.add('empty');
@@ -872,6 +874,7 @@
       elevationProfile = null;
       elevationToken++;
       document.getElementById('elevation-block').classList.remove('visible');
+      hideElevationScrub();
       return;
     }
 
@@ -1149,6 +1152,25 @@
     document.getElementById('elevation-marker-dot').style.opacity = 0;
   }
 
+  // Interpolates elevation (meters) at a given distance `along` the active
+  // direction, from the sampled elevationProfile points — shared by the
+  // live GPS marker and the chart's hover/swipe scrub marker.
+  function elevationAtAlong(along){
+    if(!elevationProfile) return null;
+    const { alongArr, elevArr } = elevationProfile;
+    if(along <= alongArr[0]) return elevArr[0];
+    let elev = elevArr[elevArr.length - 1];
+    for(let i=1;i<alongArr.length;i++){
+      if(along <= alongArr[i]){
+        const segSpan = alongArr[i] - alongArr[i-1];
+        const t = segSpan > 0 ? (along - alongArr[i-1]) / segSpan : 0;
+        elev = elevArr[i-1] + (elevArr[i]-elevArr[i-1])*t;
+        break;
+      }
+    }
+    return elev;
+  }
+
   // Moves the vertical "you are here" marker to the user's current position
   // along the active-direction route. `pos` is [lat, lon], or null/undefined
   // when GPS is off or the user has wandered away from the route.
@@ -1161,24 +1183,13 @@
     const p = computeProgress(pos);
     if(!p || p.perpMeters > PROGRESS_VISIBILITY_RADIUS_METERS){ hideElevationMarker(); return; }
 
-    const { alongArr, elevArr, minElev, maxElev } = elevationProfile;
+    const { minElev, maxElev } = elevationProfile;
     const W = ELEVATION_CHART_W, H = ELEVATION_CHART_H, PAD = ELEVATION_CHART_PAD;
     const span = Math.max(maxElev - minElev, 1);
     const total = elevationProfile.total;
     const x = total > 0 ? (p.alongMeters/total)*W : 0;
 
-    // Interpolate elevation at the marker's position from the sampled
-    // profile so the dot sits on the line rather than floating off it.
-    let elevAtMarker = elevArr[0];
-    for(let i=1;i<alongArr.length;i++){
-      if(p.alongMeters <= alongArr[i]){
-        const segSpan = alongArr[i] - alongArr[i-1];
-        const t = segSpan > 0 ? (p.alongMeters - alongArr[i-1]) / segSpan : 0;
-        elevAtMarker = elevArr[i-1] + (elevArr[i]-elevArr[i-1])*t;
-        break;
-      }
-      elevAtMarker = elevArr[i];
-    }
+    const elevAtMarker = elevationAtAlong(p.alongMeters);
     const y = PAD + (1 - (elevAtMarker-minElev)/span) * (H-2*PAD);
 
     lineEl.setAttribute('x1', x.toFixed(1));
@@ -1190,6 +1201,96 @@
     dotEl.setAttribute('cy', y.toFixed(1));
     dotEl.style.opacity = 1;
   }
+
+  // ---------- Elevation chart scrubbing (hover on desktop, swipe on mobile) ----------
+  // Lets the person drag a finger (or hover a mouse) over the elevation
+  // chart to see where along the route a given point is, both on the chart
+  // itself (a second marker, in --inbound blue to stay distinct from the
+  // --good green "you are here" one) and on the map.
+  function hideElevationScrub(){
+    document.getElementById('elevation-scrub-line').style.opacity = 0;
+    document.getElementById('elevation-scrub-dot').style.opacity = 0;
+    if(elevationScrubMarker){
+      map.removeLayer(elevationScrubMarker);
+      elevationScrubMarker = null;
+    }
+  }
+
+  function updateElevationScrub(clientX){
+    if(!elevationProfile || elevationProfile.total <= 0) return;
+    const rect = document.getElementById('elevation-chart').getBoundingClientRect();
+    if(!rect.width) return;
+
+    const frac = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const along = frac * elevationProfile.total;
+    const latlng = pointAtAlong(along);
+    const elevM = elevationAtAlong(along);
+    if(!latlng || elevM === null) return;
+
+    const { minElev, maxElev, total } = elevationProfile;
+    const W = ELEVATION_CHART_W, H = ELEVATION_CHART_H, PAD = ELEVATION_CHART_PAD;
+    const span = Math.max(maxElev - minElev, 1);
+    const x = total > 0 ? (along/total)*W : 0;
+    const y = PAD + (1 - (elevM-minElev)/span) * (H-2*PAD);
+
+    const lineEl = document.getElementById('elevation-scrub-line');
+    const dotEl = document.getElementById('elevation-scrub-dot');
+    lineEl.setAttribute('x1', x.toFixed(1));
+    lineEl.setAttribute('x2', x.toFixed(1));
+    lineEl.setAttribute('y1', 0);
+    lineEl.setAttribute('y2', H);
+    lineEl.style.opacity = 1;
+    dotEl.setAttribute('cx', x.toFixed(1));
+    dotEl.setAttribute('cy', y.toFixed(1));
+    dotEl.style.opacity = 1;
+
+    const label = Math.round(elevM * 3.28084) + ' ft';
+    if(!elevationScrubMarker){
+      elevationScrubMarker = L.marker(latlng, {
+        icon: L.divIcon({
+          className:'', iconSize:[14,14], iconAnchor:[7,7],
+          html: '<div class="elevation-scrub-marker">' +
+            '<div class="elevation-scrub-label">' + escapeHtml(label) + '</div>' +
+            '<div class="elevation-scrub-dot-icon"></div></div>'
+        }),
+        zIndexOffset: 1100,
+        interactive: false
+      }).addTo(map);
+    }else{
+      elevationScrubMarker.setLatLng(latlng);
+      const el = elevationScrubMarker.getElement();
+      const labelEl = el && el.querySelector('.elevation-scrub-label');
+      if(labelEl) labelEl.textContent = label;
+    }
+  }
+
+  (function setupElevationScrubbing(){
+    const chartEl = document.getElementById('elevation-chart');
+    let scrubbing = false;
+
+    chartEl.addEventListener('pointerdown', e=>{
+      scrubbing = true;
+      try{ chartEl.setPointerCapture(e.pointerId); }catch(err){}
+      updateElevationScrub(e.clientX);
+      if(e.cancelable) e.preventDefault();
+    });
+    chartEl.addEventListener('pointermove', e=>{
+      if(e.pointerType !== 'mouse' && !scrubbing) return;
+      updateElevationScrub(e.clientX);
+      if(e.cancelable) e.preventDefault();
+    });
+    chartEl.addEventListener('pointerup', e=>{
+      scrubbing = false;
+      if(e.pointerType !== 'mouse') hideElevationScrub();
+    });
+    chartEl.addEventListener('pointercancel', ()=>{
+      scrubbing = false;
+      hideElevationScrub();
+    });
+    chartEl.addEventListener('pointerleave', e=>{
+      if(e.pointerType === 'mouse') hideElevationScrub();
+    });
+  })();
 
   // =====================================================================
   // Live buses — powered by the muni-511-proxy Cloudflare Worker, which
